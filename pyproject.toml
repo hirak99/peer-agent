@@ -1,0 +1,86 @@
+[project]
+name = "agent-to-agent"
+requires-python = ">=3.13"
+# No dependencies here: requirements.txt is the single source of truth.
+
+[tool.pyright]
+include = ["."]
+exclude = []
+typeCheckingMode = "strict"
+
+# Whittle down some elements from analysis mode of "strict".
+reportMissingParameterType = "none"
+reportUnknownArgumentType = "none"
+reportUnknownLambdaType = "none"
+reportUnknownMemberType = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+# Allow **kwargs to be subclassed as expanded.
+reportIncompatibleMethodOverride = "none"
+reportUntypedFunctionDecorator = "error"
+# Allow working on libraries without stubs.
+reportMissingTypeStubs = "none"
+# Unfortunately redeclaring same type is still an error.
+reportRedeclaration = "none"
+
+pythonVersion = "3.13"
+pythonPlatform = "Linux"
+
+# Recommend using the ruff extension in VSCode.
+# Ruff formatting (Ctrl+Shift+I) and isort (Alt+Shift+O) are enforced in health-check.
+# Other checks are good to review and act on.
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+# Omit src deliberately, to use all dirs in project root as first party.
+# src = [...]
+
+[tool.ruff.format]
+# Enable standard Black formatting choices.
+quote-style = "double"
+indent-style = "space"
+# If false, Ruff will split to multiline if you put a comma.
+# If true, Ruff will ignore your trailing comma and split only if the line is too long.
+skip-magic-trailing-comma = false
+# Do not reformat Python embedded in .md files.
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+# I: import sorting
+# D: documentation
+# E/W: basic syntax errors, code layout warnings
+# F: structural logic bugs, unused variables/imports
+# B: complex coding traps, subtle performance flaws
+# RUF/FURB: native optimizations, modern structural fixes
+# C4: slow list/dictionary allocation mistakes
+# UP: code upgrades
+# A: built-in name shadowing (e.g. naming a variable 'id' or 'list')
+# PIE: miscellaneous code styling and redundant loop cleanups
+# SIM: code complexity reductions (e.g. flattening messy if-else chains)
+select = ["I", "D", "E", "W", "F", "B", "RUF", "FURB", "C4", "UP", "A", "PIE", "SIM"]
+
+pydocstyle.convention = "google"
+
+# I: import sorting
+# E501: line too long
+# SIM102: nested if
+# UP015: remove mode from open(fname, "r")
+# D1: missing docstrings for module, class, methods etc.
+# B023: do not complain on functions inside loop using loop variables
+ignore = ["E501", "SIM102", "UP015", "D1", "B023"]
+
+# Google's import style.
+[tool.ruff.lint.isort]
+# Google style requires one import statement per line.
+force-single-line = true
+# Exclude standard specific modules that shouldn't be split up into single lines.
+single-line-exclusions = [
+    "collections.abc",
+    "six.moves",
+    "typing",
+    "typing-extensions"
+]
+# Disable grouping by types (like class vs constant vs function).
+order-by-type = false
+# Typing should be separated from other imports.
+forced-separate = ["typing"]
