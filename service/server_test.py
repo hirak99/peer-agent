@@ -3,23 +3,36 @@
 import json
 import pathlib
 
+import pydantic
 from fastapi import testclient
 
 from service import event_log
+from service import log_events
 from service import server
 from service import store
 from service.backends import stub_backend
 
 from typing import Any
 
+_TEST_SYSTEM_PROMPT = "test system prompt"
 
-def _build_client(tmp_path: pathlib.Path) -> testclient.TestClient:
+
+def _build_client(
+    tmp_path: pathlib.Path, system_prompt: str = _TEST_SYSTEM_PROMPT
+) -> testclient.TestClient:
     app = server.build_app(
         stub_backend.StubBackend(),
         store.ConversationStore(tmp_path / "conversations"),
         event_log.EventLog(tmp_path / "logs"),
+        system_prompt,
     )
     return testclient.TestClient(app)
+
+
+def _parse_log(tmp_path: pathlib.Path, conversation_id: str) -> list[Any]:
+    adapter = pydantic.TypeAdapter(log_events.LogEvent)
+    lines = (tmp_path / "logs" / f"{conversation_id}.jsonl").read_text().splitlines()
+    return [adapter.validate_json(line) for line in lines]
 
 
 def test_health(tmp_path: pathlib.Path) -> None:
@@ -40,6 +53,61 @@ def test_chat_new_conversation(tmp_path: pathlib.Path) -> None:
     )
     assert [message["role"] for message in saved] == ["user", "assistant"]
     assert (tmp_path / "logs" / f"{body['conversation_id']}.jsonl").exists()
+
+
+def test_log_first_line_is_system_prompt(tmp_path: pathlib.Path) -> None:
+    """A new conversation log opens with a conversation_start system event."""
+    client = _build_client(tmp_path)
+    body: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "hello", "cwd": str(tmp_path)}
+    ).json()
+    parsed = _parse_log(tmp_path, body["conversation_id"])
+    first = parsed[0]
+    assert isinstance(first, log_events.SystemPromptEvent)
+    assert first.reason == "conversation_start"
+    assert first.system_prompt == _TEST_SYSTEM_PROMPT
+
+
+def test_log_response_carries_model_identity(tmp_path: pathlib.Path) -> None:
+    """Response events record the producing model and backend."""
+    client = _build_client(tmp_path)
+    body: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "hello", "cwd": str(tmp_path)}
+    ).json()
+    parsed = _parse_log(tmp_path, body["conversation_id"])
+    responses = [
+        event for event in parsed if isinstance(event, log_events.ResponseEvent)
+    ]
+    assert len(responses) == 1
+    assert responses[0].model == "stub"
+    assert responses[0].backend == "stub"
+
+
+def test_changed_system_prompt_emits_changed_event(tmp_path: pathlib.Path) -> None:
+    """A rebuilt app with a new prompt logs a changed event on next turn."""
+    first_client = _build_client(tmp_path)
+    first: dict[str, Any] = first_client.post(
+        "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
+    ).json()
+    second_client = _build_client(tmp_path, system_prompt="new system prompt")
+    second: dict[str, Any] = second_client.post(
+        "/chat",
+        json={
+            "prompt": "two",
+            "conversation_id": first["conversation_id"],
+            "cwd": str(tmp_path),
+        },
+    ).json()
+    assert second["conversation_id"] == first["conversation_id"]
+    parsed = _parse_log(tmp_path, first["conversation_id"])
+    system_events = [
+        event for event in parsed if isinstance(event, log_events.SystemPromptEvent)
+    ]
+    assert [event.reason for event in system_events] == [
+        "conversation_start",
+        "changed",
+    ]
+    assert system_events[1].system_prompt == "new system prompt"
 
 
 def test_chat_continuation(tmp_path: pathlib.Path) -> None:

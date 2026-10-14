@@ -11,6 +11,7 @@ import fastapi
 import uvicorn
 
 from service import event_log
+from service import log_events
 from service import models
 from service import store
 from service.backends import anthropic_backend
@@ -78,7 +79,31 @@ def _resolve_context(request: models.ChatRequest) -> base.ToolContext:
     return base.ToolContext(workdir=workdir)
 
 
+def _maybe_emit_system_prompt(
+    conversations: store.ConversationStore,
+    events: event_log.EventLog,
+    conversation_id: str,
+    system_prompt: str,
+) -> None:
+    previous = conversations.load_system_prompt(conversation_id)
+    if previous is None:
+        events.record(
+            conversation_id,
+            log_events.SystemPromptEvent(
+                system_prompt=system_prompt, reason="conversation_start"
+            ),
+        )
+        conversations.save_system_prompt(conversation_id, system_prompt)
+    elif previous != system_prompt:
+        events.record(
+            conversation_id,
+            log_events.SystemPromptEvent(system_prompt=system_prompt, reason="changed"),
+        )
+        conversations.save_system_prompt(conversation_id, system_prompt)
+
+
 def _log_completion(
+    backend: base.Backend,
     events: event_log.EventLog,
     conversation_id: str,
     completion: base.Completion,
@@ -86,23 +111,23 @@ def _log_completion(
     for tool_event in completion.tool_events:
         events.record(
             conversation_id,
-            {
-                "type": "tool_call",
-                "name": tool_event.name,
-                "input": tool_event.tool_input,
-            },
+            log_events.ToolCallEvent(
+                name=tool_event.name, tool_input=tool_event.tool_input
+            ),
         )
         events.record(
             conversation_id,
-            {
-                "type": "tool_result",
-                "name": tool_event.name,
-                "output": tool_event.output,
-            },
+            log_events.ToolResultEvent(name=tool_event.name, output=tool_event.output),
         )
+    identity = backend.describe()
     events.record(
         conversation_id,
-        {"type": "response", "text": completion.text, "usage": completion.usage},
+        log_events.ResponseEvent(
+            text=completion.text,
+            usage=completion.usage,
+            model=identity["model"],
+            backend=identity["backend"],
+        ),
     )
 
 
@@ -110,6 +135,7 @@ def build_app(
     backend: base.Backend,
     conversations: store.ConversationStore,
     events: event_log.EventLog,
+    system_prompt: str,
 ) -> fastapi.FastAPI:
     """Builds the FastAPI app over the given backend and storage."""
     app = fastapi.FastAPI(title="peer-agent")
@@ -122,14 +148,15 @@ def build_app(
     def _chat(request: models.ChatRequest) -> models.ChatResponse:
         context = _resolve_context(request)
         conversation_id, history = _resolve_history(conversations, request)
+        _maybe_emit_system_prompt(conversations, events, conversation_id, system_prompt)
         events.record(
             conversation_id,
-            {"type": "prompt", "prompt": request.prompt, "cwd": request.cwd},
+            log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
         )
         history.append({"role": "user", "content": request.prompt})
         completion = backend.complete(history, context)
         conversations.save(conversation_id, history)
-        _log_completion(events, conversation_id, completion)
+        _log_completion(backend, events, conversation_id, completion)
         return models.ChatResponse(
             text=completion.text, conversation_id=conversation_id
         )
@@ -142,9 +169,12 @@ def build_app(
             try:
                 context = _resolve_context(request)
                 conversation_id, history = _resolve_history(conversations, request)
+                _maybe_emit_system_prompt(
+                    conversations, events, conversation_id, system_prompt
+                )
                 events.record(
                     conversation_id,
-                    {"type": "prompt", "prompt": request.prompt, "cwd": request.cwd},
+                    log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
                 )
                 history.append({"role": "user", "content": request.prompt})
                 tool_events: list[base.ToolEvent] = []
@@ -156,6 +186,7 @@ def build_app(
                     )
                 conversations.save(conversation_id, history)
                 _log_completion(
+                    backend,
                     events,
                     conversation_id,
                     base.Completion(
@@ -213,6 +244,7 @@ def main() -> None:
         build_backend(args.backend, args.model, args.system_prompt),
         store.ConversationStore(_CONVERSATIONS_DIR),
         event_log.EventLog(_LOGS_DIR),
+        args.system_prompt,
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

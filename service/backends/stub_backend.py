@@ -10,6 +10,10 @@ from typing import Any
 class StubBackend(base.Backend):
     """Echoes the last user message without calling any provider."""
 
+    def describe(self) -> dict[str, str]:
+        """Returns stub identity for logging."""
+        return {"model": "stub", "backend": "stub"}
+
     def complete(
         self, messages: list[dict[str, Any]], context: base.ToolContext
     ) -> base.Completion:

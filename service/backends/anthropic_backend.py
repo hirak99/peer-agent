@@ -5,6 +5,7 @@ from collections.abc import Iterator
 
 import anthropic
 
+from service import log_events
 from service.backends import base
 from service.tools import registry
 
@@ -33,6 +34,24 @@ class AnthropicBackend(base.Backend):
         self._system_prompt = system_prompt
         self._tools = tools
         self._client = anthropic.Anthropic(api_key=api_key)
+
+    def describe(self) -> dict[str, str]:
+        """Returns Anthropic backend identity for logging."""
+        return {"model": self._model, "backend": "anthropic"}
+
+    @staticmethod
+    def _to_token_usage(usage: Any) -> log_events.TokenUsage:
+        prompt_tokens: int | None = getattr(usage, "input_tokens", None)
+        completion_tokens: int | None = getattr(usage, "output_tokens", None)
+        total_tokens: int | None = None
+        if prompt_tokens is not None or completion_tokens is not None:
+            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+        return log_events.TokenUsage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            cached_prompt_tokens=getattr(usage, "cache_read_input_tokens", None),
+        )
 
     def _message_params(
         self, messages: list[dict[str, Any]]
@@ -79,7 +98,7 @@ class AnthropicBackend(base.Backend):
     ) -> base.Completion:
         """Runs model turns until final text, executing tools between turns."""
         tool_events: list[base.ToolEvent] = []
-        usage: dict[str, Any] | None = None
+        usage: log_events.TokenUsage | None = None
         for _ in range(_MAX_TOOL_TURNS + 1):
             response = self._client.messages.create(
                 model=self._model,
@@ -89,7 +108,7 @@ class AnthropicBackend(base.Backend):
                 **self._extra_params(context),
             )
             if response.usage is not None:
-                usage = response.usage.model_dump()
+                usage = self._to_token_usage(response.usage)
             calls = [block for block in response.content if block.type == "tool_use"]
             if not calls:
                 text = "".join(

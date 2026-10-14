@@ -1,10 +1,8 @@
 """Append-only per-conversation JSONL event log."""
 
-import json
 import pathlib
-import time
 
-from typing import Any
+from service import log_events
 
 
 class EventLog:
@@ -14,9 +12,8 @@ class EventLog:
         self._directory = directory
         self._directory.mkdir(parents=True, exist_ok=True)
 
-    def record(self, conversation_id: str, event: dict[str, Any]) -> None:
-        """Appends one timestamped event to the conversation's log file."""
-        line = {"ts": time.time(), **event}
+    def record(self, conversation_id: str, event: log_events.LogEvent) -> None:
+        """Appends one typed event to the conversation's log file."""
         path = self._directory / f"{conversation_id}.jsonl"
         with open(path, "a") as handle:
-            handle.write(json.dumps(line) + "\n")
+            handle.write(event.model_dump_json() + "\n")

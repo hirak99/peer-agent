@@ -36,3 +36,18 @@ class ConversationStore:
     def save(self, conversation_id: str, messages: list[dict[str, Any]]) -> None:
         """Overwrites the stored history for a conversation."""
         self._path_for(conversation_id).write_text(json.dumps(messages))
+
+    def load_system_prompt(self, conversation_id: str) -> str | None:
+        """Loads the tracked system prompt, or None for new conversations."""
+        path = self._directory / f"{conversation_id}.meta.json"
+        if not path.exists():
+            return None
+        raw: Any = json.loads(path.read_text())
+        if isinstance(raw, dict) and isinstance(raw.get("system_prompt"), str):
+            return raw["system_prompt"]
+        return None
+
+    def save_system_prompt(self, conversation_id: str, system_prompt: str) -> None:
+        """Records the active system prompt for change detection."""
+        path = self._directory / f"{conversation_id}.meta.json"
+        path.write_text(json.dumps({"system_prompt": system_prompt}))

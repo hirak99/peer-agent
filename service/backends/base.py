@@ -5,6 +5,8 @@ import dataclasses
 import pathlib
 from collections.abc import Iterator
 
+from service import log_events
+
 from typing import Any
 
 
@@ -34,8 +36,8 @@ class Completion:
 
     # The peer agent's final reply text.
     text: str
-    # Provider-reported usage payload, or None when unreported.
-    usage: dict[str, Any] | None
+    # Provider-reported token counts, or None when unreported.
+    usage: log_events.TokenUsage | None
     # Tool invocations in order, for logging.
     tool_events: list[ToolEvent]
 
@@ -46,6 +48,10 @@ class Backend(abc.ABC):
     Both entry points append their assistant turns onto `messages`, so the
     caller can persist the list verbatim for the next turn.
     """
+
+    @abc.abstractmethod
+    def describe(self) -> dict[str, str]:
+        """Returns backend/model identity for logging."""
 
     @abc.abstractmethod
     def complete(
