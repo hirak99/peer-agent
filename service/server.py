@@ -25,7 +25,7 @@ from typing import Any
 # Hardcoded loopback port; override with --port.
 DEFAULT_PORT = 8471
 # Default Anthropic model; override with --model.
-_DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+_DEFAULT_MODEL = "claude-sonnet-5-5"
 # Default peer system prompt; override with --system-prompt.
 _DEFAULT_SYSTEM_PROMPT = (
     "You are a capable peer coding agent. Answer directly and use the bash "

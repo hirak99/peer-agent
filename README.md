@@ -13,6 +13,18 @@ python -m service.server --port 8471            # default backend: anthropic
 python -m service.server --backend stub --port 8471   # offline smoke test
 ```
 
+## Model
+
+Default is `claude-sonnet-5-5`. Pick another with `--model`:
+
+```sh
+python -m service.server --model claude-haiku-5-5 --port 8471   # cheap, good for testing
+python -m service.server --model claude-opus-5-5 --port 8471    # strongest, priciest
+```
+
+The active model is recorded on every `response` line in `logs/`, so a
+mid-thread model switch stays attributable.
+
 ## Chat
 
 ```sh
