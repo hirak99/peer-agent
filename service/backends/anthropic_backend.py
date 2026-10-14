@@ -34,6 +34,18 @@ class AnthropicBackend(base.Backend):
         self._system_prompt = system_prompt
         self._tools = tools
         self._client = anthropic.Anthropic(api_key=api_key)
+        self._validate_model()
+
+    def _validate_model(self) -> None:
+        """Pre-flights model id and key via the free Models API (no tokens)."""
+        try:
+            self._client.models.retrieve(self._model)
+        except anthropic.NotFoundError as exc:
+            raise RuntimeError(f"Unknown model: {self._model}.") from exc
+        except anthropic.AuthenticationError as exc:
+            raise RuntimeError(
+                f"Invalid {_ANTHROPIC_KEY_ENV}: authentication failed."
+            ) from exc
 
     def describe(self) -> dict[str, str]:
         """Returns Anthropic backend identity for logging."""
