@@ -28,7 +28,9 @@ _DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 # Default peer system prompt; override with --system-prompt.
 _DEFAULT_SYSTEM_PROMPT = (
     "You are a capable peer coding agent. Answer directly and use the bash "
-    "tool when running commands helps. Keep replies concise."
+    "tool when running commands helps. Keep replies concise. Only invoke "
+    "tools actually offered to you; when no tools are offered, say what you "
+    "cannot do instead of emitting fake tool calls or guessed outputs."
 )
 # Project-root-relative state directories.
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -63,6 +65,17 @@ def _resolve_history(
     if not conversations.exists(request.conversation_id):
         raise fastapi.HTTPException(status_code=404, detail="Unknown conversation_id.")
     return request.conversation_id, conversations.load(request.conversation_id)
+
+
+def _resolve_context(request: models.ChatRequest) -> base.ToolContext:
+    if request.cwd is None:
+        return base.ToolContext(workdir=None)
+    workdir = pathlib.Path(request.cwd)
+    if not workdir.is_absolute() or not workdir.is_dir():
+        raise fastapi.HTTPException(
+            status_code=400, detail="cwd must be an existing absolute directory."
+        )
+    return base.ToolContext(workdir=workdir)
 
 
 def _log_completion(
@@ -107,10 +120,14 @@ def build_app(
 
     @app.post("/chat")
     def _chat(request: models.ChatRequest) -> models.ChatResponse:
+        context = _resolve_context(request)
         conversation_id, history = _resolve_history(conversations, request)
-        events.record(conversation_id, {"type": "prompt", "prompt": request.prompt})
+        events.record(
+            conversation_id,
+            {"type": "prompt", "prompt": request.prompt, "cwd": request.cwd},
+        )
         history.append({"role": "user", "content": request.prompt})
-        completion = backend.complete(history)
+        completion = backend.complete(history, context)
         conversations.save(conversation_id, history)
         _log_completion(events, conversation_id, completion)
         return models.ChatResponse(
@@ -122,15 +139,17 @@ def build_app(
         request: models.ChatRequest,
     ) -> fastapi.responses.StreamingResponse:
         def _generate() -> Iterator[str]:
-            conversation_id, history = _resolve_history(conversations, request)
             try:
+                context = _resolve_context(request)
+                conversation_id, history = _resolve_history(conversations, request)
                 events.record(
-                    conversation_id, {"type": "prompt", "prompt": request.prompt}
+                    conversation_id,
+                    {"type": "prompt", "prompt": request.prompt, "cwd": request.cwd},
                 )
                 history.append({"role": "user", "content": request.prompt})
                 tool_events: list[base.ToolEvent] = []
                 pieces: list[str] = []
-                for token in backend.stream_text(history, tool_events):
+                for token in backend.stream_text(history, tool_events, context):
                     pieces.append(token)
                     yield (
                         "data: " + json.dumps({"type": "token", "text": token}) + "\n\n"

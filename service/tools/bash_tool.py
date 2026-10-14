@@ -1,7 +1,9 @@
 """Bash tool: run a shell command, return truncated output."""
 
+import pathlib
 import subprocess
 
+from service.backends import base
 from service.tools import registry
 
 from typing import Any
@@ -14,8 +16,8 @@ _BASH_TIMEOUT_S = 120
 _BASH_MAX_BYTES = 32768
 
 
-def _run_command(command: str) -> str:
-    """Runs one shell command, merging stdout/stderr with truncation."""
+def _run_command(command: str, workdir: pathlib.Path) -> str:
+    """Runs one shell command in workdir, merging stdout/stderr truncated."""
     try:
         completed = subprocess.run(
             command,
@@ -23,6 +25,7 @@ def _run_command(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=_BASH_TIMEOUT_S,
+            cwd=workdir,
         )
     except subprocess.TimeoutExpired:
         return f"<timed out after {_BASH_TIMEOUT_S}s: {command}>"
@@ -33,8 +36,9 @@ def _run_command(command: str) -> str:
 def build_bash_tool() -> registry.Tool:
     """Builds the registry entry for the bash tool."""
 
-    def _handle(tool_input: dict[str, Any]) -> str:
-        return _run_command(str(tool_input.get("command", "")))
+    def _handle(tool_input: dict[str, Any], context: base.ToolContext) -> str:
+        assert context.workdir is not None, "bash offered without a workdir"
+        return _run_command(str(tool_input.get("command", "")), context.workdir)
 
     return registry.Tool(
         name=BASH_TOOL_NAME,

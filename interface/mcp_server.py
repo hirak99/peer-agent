@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 
@@ -23,9 +24,16 @@ MCP = fastmcp.FastMCP("peer-agent")
 
 
 @MCP.tool()
-def peer_chat(prompt: str, conversation_id: str | None = None) -> str:
+def peer_chat(
+    prompt: str,
+    conversation_id: str | None = None,
+    cwd: str | None = None,
+) -> str:
     """Ask the peer agent; pass back conversation_id to continue the thread."""
-    payload: dict[str, Any] = {"prompt": prompt}
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "cwd": cwd if cwd is not None else os.getcwd(),
+    }
     if conversation_id is not None:
         payload["conversation_id"] = conversation_id
     response = httpx.post(

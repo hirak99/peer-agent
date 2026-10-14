@@ -25,7 +25,7 @@ Raw HTTP:
 
 ```sh
 curl -s localhost:8471/chat -H 'content-type: application/json' \
-  -d '{"prompt":"hi"}'
+  -d '{"prompt":"hi","cwd":"/abs/host/workdir"}'
 # {"text":"...","conversation_id":"..."}
 ```
 

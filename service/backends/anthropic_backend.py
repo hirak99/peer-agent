@@ -39,14 +39,19 @@ class AnthropicBackend(base.Backend):
     ) -> list[anthropic.types.MessageParam]:
         return cast(list[anthropic.types.MessageParam], messages)
 
-    def _extra_params(self) -> dict[str, Any]:
+    def _extra_params(self, context: base.ToolContext) -> dict[str, Any]:
+        if context.workdir is None:
+            return {}
         schemas = self._tools.anthropic_schemas()
         if not schemas:
             return {}
         return {"tools": cast(list[anthropic.types.ToolUnionParam], schemas)}
 
     def _run_calls(
-        self, calls: list[Any], tool_events: list[base.ToolEvent]
+        self,
+        calls: list[Any],
+        tool_events: list[base.ToolEvent],
+        context: base.ToolContext,
     ) -> list[dict[str, Any]]:
         """Executes tool_use blocks into Anthropic tool_result blocks."""
         results: list[dict[str, Any]] = []
@@ -56,7 +61,7 @@ class AnthropicBackend(base.Backend):
             if tool is None:
                 output = f"<unknown tool: {call.name}>"
             else:
-                output = tool.handler(tool_input)
+                output = tool.handler(tool_input, context)
             tool_events.append(
                 base.ToolEvent(name=call.name, tool_input=tool_input, output=output)
             )
@@ -69,7 +74,9 @@ class AnthropicBackend(base.Backend):
             )
         return results
 
-    def complete(self, messages: list[dict[str, Any]]) -> base.Completion:
+    def complete(
+        self, messages: list[dict[str, Any]], context: base.ToolContext
+    ) -> base.Completion:
         """Runs model turns until final text, executing tools between turns."""
         tool_events: list[base.ToolEvent] = []
         usage: dict[str, Any] | None = None
@@ -79,7 +86,7 @@ class AnthropicBackend(base.Backend):
                 max_tokens=_MAX_TOKENS,
                 system=self._system_prompt,
                 messages=self._message_params(messages),
-                **self._extra_params(),
+                **self._extra_params(context),
             )
             if response.usage is not None:
                 usage = response.usage.model_dump()
@@ -97,12 +104,18 @@ class AnthropicBackend(base.Backend):
                 }
             )
             messages.append(
-                {"role": "user", "content": self._run_calls(calls, tool_events)}
+                {
+                    "role": "user",
+                    "content": self._run_calls(calls, tool_events, context),
+                }
             )
         raise RuntimeError(f"Exceeded {_MAX_TOOL_TURNS} tool turns.")
 
     def stream_text(
-        self, messages: list[dict[str, Any]], tool_events: list[base.ToolEvent]
+        self,
+        messages: list[dict[str, Any]],
+        tool_events: list[base.ToolEvent],
+        context: base.ToolContext,
     ) -> Iterator[str]:
         """Streams reply tokens live, running tool turns between streams."""
         for _ in range(_MAX_TOOL_TURNS + 1):
@@ -111,7 +124,7 @@ class AnthropicBackend(base.Backend):
                 max_tokens=_MAX_TOKENS,
                 system=self._system_prompt,
                 messages=self._message_params(messages),
-                **self._extra_params(),
+                **self._extra_params(context),
             ) as stream:
                 for text in stream.text_stream:
                     yield text
@@ -130,6 +143,9 @@ class AnthropicBackend(base.Backend):
                 }
             )
             messages.append(
-                {"role": "user", "content": self._run_calls(calls, tool_events)}
+                {
+                    "role": "user",
+                    "content": self._run_calls(calls, tool_events, context),
+                }
             )
         raise RuntimeError(f"Exceeded {_MAX_TOOL_TURNS} tool turns.")

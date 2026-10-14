@@ -3,6 +3,8 @@
 import dataclasses
 from collections.abc import Callable
 
+from service.backends import base
+
 from typing import Any
 
 
@@ -16,8 +18,8 @@ class Tool:
     description: str
     # JSON Schema object describing the tool input.
     input_schema: dict[str, Any]
-    # Handler mapping decoded input to result text.
-    handler: Callable[[dict[str, Any]], str]
+    # Handler mapping decoded input and turn context to result text.
+    handler: Callable[[dict[str, Any], base.ToolContext], str]
 
 
 class ToolRegistry:

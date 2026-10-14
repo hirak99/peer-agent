@@ -2,9 +2,18 @@
 
 import abc
 import dataclasses
+import pathlib
 from collections.abc import Iterator
 
 from typing import Any
+
+
+@dataclasses.dataclass
+class ToolContext:
+    """Per-turn execution context handed to every tool handler."""
+
+    # Host working directory, or None when this turn has no filesystem.
+    workdir: pathlib.Path | None
 
 
 @dataclasses.dataclass
@@ -39,14 +48,19 @@ class Backend(abc.ABC):
     """
 
     @abc.abstractmethod
-    def complete(self, messages: list[dict[str, Any]]) -> Completion:
+    def complete(
+        self, messages: list[dict[str, Any]], context: ToolContext
+    ) -> Completion:
         """Runs the model (including tool turns) to a final reply."""
 
     def stream_text(
-        self, messages: list[dict[str, Any]], tool_events: list[ToolEvent]
+        self,
+        messages: list[dict[str, Any]],
+        tool_events: list[ToolEvent],
+        context: ToolContext,
     ) -> Iterator[str]:
         """Yields reply text pieces; appends observed tool events."""
-        completion = self.complete(messages)
+        completion = self.complete(messages, context)
         tool_events.extend(completion.tool_events)
         for index in range(0, len(completion.text), 400):
             yield completion.text[index : index + 400]

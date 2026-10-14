@@ -10,6 +10,9 @@ class ChatRequest(pydantic.BaseModel):
     prompt: str
     # Existing conversation to continue. Omitted to start a new one.
     conversation_id: str | None = None
+    # Host working directory for tool execution. Required; null withholds
+    # filesystem tools (bash) for this turn.
+    cwd: str | None
 
 
 class ChatResponse(pydantic.BaseModel):

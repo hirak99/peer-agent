@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 
@@ -23,6 +24,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--conversation-id", default=None)
     parser.add_argument("--port", type=int, default=server.DEFAULT_PORT)
     parser.add_argument("--stream", action="store_true")
+    parser.add_argument("--cwd", default=os.getcwd())
+    parser.add_argument("--null-cwd", action="store_true")
     return parser.parse_args()
 
 
@@ -51,7 +54,10 @@ def _run_stream(base_url: str, payload: dict[str, Any]) -> None:
 def main() -> None:
     """Sends one prompt, prints the reply, reports the conversation id."""
     args = _parse_args()
-    payload: dict[str, Any] = {"prompt": args.prompt}
+    payload: dict[str, Any] = {
+        "prompt": args.prompt,
+        "cwd": None if args.null_cwd else args.cwd,
+    }
     if args.conversation_id is not None:
         payload["conversation_id"] = args.conversation_id
     base_url = f"http://127.0.0.1:{args.port}"
