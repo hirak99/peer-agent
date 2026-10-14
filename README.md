@@ -71,3 +71,7 @@ See `interface/SKILL.md` for the plain-HTTP instructions any agent can follow.
 - `service/tools/` — `registry.py` (open for new tools), `bash_tool.py`
 - `service/store.py`, `service/event_log.py` — `conversations/*.json`, `logs/*.jsonl`
 - `client/chat.py`, `interface/mcp_server.py`
+
+## License
+
+Apache-2.0, Copyright 2026 Arnab Bose. See `LICENSE`.
