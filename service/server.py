@@ -6,6 +6,7 @@ import logging
 import pathlib
 from collections.abc import Iterator
 
+import dotenv
 import fastapi
 import uvicorn
 
@@ -188,6 +189,7 @@ def main() -> None:
     parser.add_argument("--system-prompt", default=_DEFAULT_SYSTEM_PROMPT)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
+    dotenv.load_dotenv(_PROJECT_ROOT / ".env")
     app = build_app(
         build_backend(args.backend, args.model, args.system_prompt),
         store.ConversationStore(_CONVERSATIONS_DIR),

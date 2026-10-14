@@ -8,7 +8,7 @@ final `text` with the `conversation_id`.
 ## Run
 
 ```sh
-export ANTHROPIC_API_KEY=...   # never commit this
+cp .env.example .env   # then put your key in .env (git-ignored)
 python -m service.server --port 8471            # default backend: anthropic
 python -m service.server --backend stub --port 8471   # offline smoke test
 ```
