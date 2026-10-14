@@ -7,11 +7,20 @@ you only send the new prompt.
 
 Base: `http://127.0.0.1:8471` (override `--port` on both ends if changed).
 
-Start it first (needs `ANTHROPIC_API_KEY` in its environment):
+The human manages the server; never start it yourself (no background
+processes, no port juggling — one server serves all callers).
+
+## Preflight
+
+Before your first call, check the server is up:
 
 ```sh
-python -m service.server --port 8471
+curl -s --max-time 5 localhost:8471/health
+# {"status":"ok"}
 ```
+
+If that fails, stop and tell the human the peer-agent server is down and
+ask them to start it. Do not attempt to launch it.
 
 ## Chat
 
