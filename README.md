@@ -62,12 +62,13 @@ Stdio wrapper over the same HTTP service:
 python interface/mcp_server.py --port 8471
 ```
 
-opencode project config (`opencode.jsonc`):
+opencode project config (`opencode.jsonc`). Use absolute paths — the wrapper
+runs from the host agent's project directory, not from here:
 
 ```jsonc
 {"mcp": {"servers": {"peer-agent": {
   "type": "local",
-  "command": ["python", "interface/mcp_server.py", "--port", "8471"],
+  "command": ["/abs/path/to/venv/python", "/abs/path/to/peer-agent/interface/mcp_server.py", "--port", "8471"],
 }}}}
 ```
 
