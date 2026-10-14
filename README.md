@@ -5,6 +5,15 @@ Stateful peer-agent service. A host agent sends a `prompt` (plus an optional
 (Anthropic by default) with a server-side `bash` tool loop, and returns the
 final `text` with the `conversation_id`.
 
+## Quick Start
+
+- `cp .env.example .env` and put your key in `.env`.
+- Start the service from this directory: `python -m service.server --port 8471`.
+
+- Start any coding agent **from your project directory** (not here).
+- Ask your agent to read the `<abs-path-to-this-repo>/interface/SKILL.md`.
+- Now you can ask your agent to talk to peer agent, e.g. "validate your plan with peer agent".
+
 ## Run
 
 ```sh
@@ -41,6 +50,10 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 # {"text":"...","conversation_id":"..."}
 ```
 
+## Skill (Option A)
+
+See `interface/SKILL.md` for the plain-HTTP instructions any agent can follow.
+
 ## MCP (Option B)
 
 Stdio wrapper over the same HTTP service:
@@ -58,11 +71,7 @@ opencode project config (`opencode.jsonc`):
 }}}}
 ```
 
-This exposes a `peer_chat(prompt, conversation_id?)` tool.
-
-## Skill (Option A)
-
-See `interface/SKILL.md` for the plain-HTTP instructions any agent can follow.
+This exposes a `peer_chat(prompt, conversation_id?, cwd?)` tool.
 
 ## Layout
 
