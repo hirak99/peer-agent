@@ -2,7 +2,9 @@
 
 import json
 import pathlib
+import time
 import types
+from collections import deque
 
 from service.backends import anthropic_backend
 from service.backends import base
@@ -162,6 +164,7 @@ def test_message_params_marks_tail_without_mutating_history() -> None:
 def test_complete_leaves_stored_history_cache_free() -> None:
     """The full request is cache-marked but persistence sees plain history."""
     backend = _wired_backend()
+    _seed_times(backend, [30, 20, 10])
     calls: list[dict[str, Any]] = []
 
     def _create(**kwargs: Any) -> Any:
@@ -181,3 +184,70 @@ def test_complete_leaves_stored_history_cache_free() -> None:
     sent = calls[0]
     assert sent["system"][0]["cache_control"] == {"type": "ephemeral"}
     assert sent["messages"][-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def _seed_times(
+    backend: anthropic_backend.AnthropicBackend, offsets: list[float]
+) -> None:
+    """Seeds recency history at offsets (seconds ago)."""
+    now = time.monotonic()
+    backend._request_times = deque(
+        [now - offset for offset in offsets],
+        maxlen=anthropic_backend._CACHE_RECENCY_COUNT,
+    )
+
+
+def test_cache_gating_starts_cold() -> None:
+    """Fresh backends skip breakpoints until brisk cadence is proven."""
+    backend = _wired_backend()
+    assert backend._should_cache() is False
+    assert backend._should_cache() is False
+    assert backend._should_cache() is False
+    assert backend._should_cache() is True
+
+
+def test_cache_gating_rejects_stale_cadence() -> None:
+    """One old request in the window disables breakpoints for this call."""
+    backend = _wired_backend()
+    _seed_times(backend, [400, 10, 0])
+    assert backend._should_cache() is False
+
+
+def test_cache_gating_reenables_after_brisk_resume() -> None:
+    """Post-idle calls pay base price until three brisk requests re-arm."""
+    backend = _wired_backend()
+    _seed_times(backend, [1000, 900, 800])
+    assert backend._should_cache() is False
+    assert backend._should_cache() is False
+    assert backend._should_cache() is False
+    assert backend._should_cache() is True
+
+
+def test_helpers_omit_breakpoints_when_gated_off() -> None:
+    """use_cache=False leaves system and history unmarked."""
+    backend = _wired_backend()
+    assert backend._system_param(use_cache=False) == [
+        {"type": "text", "text": "test system"}
+    ]
+    params = backend._message_params([{"role": "user", "content": "hi"}], False)
+    assert params == [{"role": "user", "content": "hi"}]
+
+
+def test_complete_skips_breakpoints_on_cold_start() -> None:
+    """The first calls of a session carry no cache markers."""
+    backend = _wired_backend()
+    calls: list[dict[str, Any]] = []
+
+    def _create(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(type="text", text="done")],
+            usage=types.SimpleNamespace(input_tokens=50, output_tokens=5),
+        )
+
+    backend._client = types.SimpleNamespace(
+        messages=types.SimpleNamespace(create=_create)
+    )
+    history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
+    backend.complete(history, base.ToolContext(workdir=None), None)
+    assert "cache_control" not in json.dumps(calls[0])

@@ -3,6 +3,8 @@
 import hashlib
 import json
 import os
+import time
+from collections import deque
 from collections.abc import Iterator
 
 import anthropic
@@ -45,6 +47,12 @@ _SEEN_HISTORY_CAP = 512
 # Attached to the system prompt, the last tool definition, and the history
 # tail on every request; per-request copies keep stored history clean.
 _CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
+# Breakpoints both read the cache and (re)write it at +25%; a write nobody
+# re-reads before the TTL is pure surcharge. Attach them only when recent
+# cadence shows the cache will be read: the last few requests must fall
+# inside the freshness window (which tracks the 5-min ephemeral TTL).
+_CACHE_RECENCY_COUNT = 3
+_CACHE_FRESHNESS_WINDOW_S = 5 * 60
 
 
 class AnthropicBackend(base.Backend):
@@ -76,6 +84,8 @@ class AnthropicBackend(base.Backend):
         self._compact_keep = compact_keep_messages
         self._max_input_tokens: int | None = None
         self._client = anthropic.Anthropic(api_key=api_key)
+        # Start times (monotonic) of recent API requests, for cache gating.
+        self._request_times: deque[float] = deque(maxlen=_CACHE_RECENCY_COUNT)
         self._validate_model()
 
     def _validate_model(self) -> None:
@@ -139,11 +149,12 @@ class AnthropicBackend(base.Backend):
             ]
         compact_model = getattr(self, "_compact_model", getattr(self, "_model", ""))
         summary_budget = getattr(self, "_compact_summary_max_tokens", 2000)
+        use_cache = self._should_cache()
         response = self._client.messages.create(
             model=compact_model,
             max_tokens=summary_budget,
-            system=self._system_param(compaction.SUMMARY_SYSTEM_PROMPT),
-            messages=self._message_params(summarizer_messages),
+            system=self._system_param(compaction.SUMMARY_SYSTEM_PROMPT, use_cache),
+            messages=self._message_params(summarizer_messages, use_cache),
         )
         return "".join(
             block.text for block in response.content if block.type == "text"
@@ -228,22 +239,41 @@ class AnthropicBackend(base.Backend):
             cache_creation_input_tokens=created,
         )
 
-    def _system_param(self, text: str | None = None) -> Any:
-        """Returns a system prompt carrying a cache breakpoint."""
-        return [
-            {
-                "type": "text",
-                "text": text if text is not None else self._system_prompt,
-                "cache_control": dict(_CACHE_BREAKPOINT),
-            }
-        ]
+    def _should_cache(self) -> bool:
+        """Reports whether this request should carry cache breakpoints.
+
+        True only when the last few requests fall inside the freshness
+        window, i.e. the cache is probably alive and will be re-read.
+        Records every request so slow cadences naturally disable caching.
+        """
+        times = getattr(self, "_request_times", None)
+        if times is None:
+            times = deque(maxlen=_CACHE_RECENCY_COUNT)
+            self._request_times = times
+        now = time.monotonic()
+        fresh = (
+            len(times) >= _CACHE_RECENCY_COUNT
+            and now - times[0] <= _CACHE_FRESHNESS_WINDOW_S
+        )
+        times.append(now)
+        return fresh
+
+    def _system_param(self, text: str | None = None, use_cache: bool = True) -> Any:
+        """Returns a system prompt, cache-marked unless gated off."""
+        block: dict[str, Any] = {
+            "type": "text",
+            "text": text if text is not None else self._system_prompt,
+        }
+        if use_cache:
+            block["cache_control"] = dict(_CACHE_BREAKPOINT)
+        return [block]
 
     def _message_params(
-        self, messages: list[dict[str, Any]]
+        self, messages: list[dict[str, Any]], use_cache: bool = True
     ) -> list[anthropic.types.MessageParam]:
-        """Copies history with a cache breakpoint on the tail."""
+        """Copies history with a cache breakpoint on the tail, unless gated."""
         params = [dict(message) for message in messages]
-        if not params:
+        if not params or not use_cache:
             return cast(list[anthropic.types.MessageParam], params)
         last = params[-1]
         content = last.get("content")
@@ -265,7 +295,11 @@ class AnthropicBackend(base.Backend):
         return cast(list[anthropic.types.MessageParam], params)
 
     def _extra_params(
-        self, context: base.ToolContext, *, with_tools: bool = True
+        self,
+        context: base.ToolContext,
+        *,
+        with_tools: bool = True,
+        use_cache: bool = True,
     ) -> dict[str, Any]:
         if not with_tools or context.workdir is None:
             return {}
@@ -273,7 +307,8 @@ class AnthropicBackend(base.Backend):
         if not schemas:
             return {}
         copied = [dict(schema) for schema in schemas]
-        copied[-1]["cache_control"] = dict(_CACHE_BREAKPOINT)
+        if use_cache:
+            copied[-1]["cache_control"] = dict(_CACHE_BREAKPOINT)
         return {"tools": cast(list[anthropic.types.ToolUnionParam], copied)}
 
     @staticmethod
@@ -375,12 +410,17 @@ class AnthropicBackend(base.Backend):
                 ),
             }
         )
+        use_cache = self._should_cache()
         response = self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
-            system=self._system_param(),
-            messages=self._message_params(messages),
-            **self._extra_params(base.ToolContext(workdir=None), with_tools=False),
+            system=self._system_param(use_cache=use_cache),
+            messages=self._message_params(messages, use_cache),
+            **self._extra_params(
+                base.ToolContext(workdir=None),
+                with_tools=False,
+                use_cache=use_cache,
+            ),
         )
         if response.usage is not None:
             usage = self._accumulate_usage(usage, self._to_token_usage(response.usage))
@@ -426,12 +466,13 @@ class AnthropicBackend(base.Backend):
                 completion.compaction = recovered
                 return completion
             try:
+                use_cache = self._should_cache()
                 response = self._client.messages.create(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    system=self._system_param(),
-                    messages=self._message_params(messages),
-                    **self._extra_params(context),
+                    system=self._system_param(use_cache=use_cache),
+                    messages=self._message_params(messages, use_cache),
+                    **self._extra_params(context, use_cache=use_cache),
                 )
             except Exception as exc:
                 if recovered is not None or not self.is_context_overflow(exc):
@@ -514,12 +555,13 @@ class AnthropicBackend(base.Backend):
                 yield completion.text
                 return
             try:
+                use_cache = self._should_cache()
                 stream_manager = self._client.messages.stream(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    system=self._system_param(),
-                    messages=self._message_params(messages),
-                    **self._extra_params(context),
+                    system=self._system_param(use_cache=use_cache),
+                    messages=self._message_params(messages, use_cache),
+                    **self._extra_params(context, use_cache=use_cache),
                 )
             except Exception as exc:
                 if (

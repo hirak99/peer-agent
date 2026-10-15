@@ -38,7 +38,10 @@ mid-thread model switch stays attributable.
 
 Every request marks ephemeral cache breakpoints on the system prompt, the
 last tool definition, and the history tail, so repeated history is served
-from cache (5-min TTL) instead of rebilled. Watch `cached_prompt_tokens` vs
+from cache (5-min TTL) instead of rebilled. Breakpoints are attached only
+when the last 3 requests fall inside a 5-minute window — a write nobody
+re-reads costs +25% for nothing, so slow cadences (long tool runs, idle
+gaps) transparently pay base price instead. Watch `cached_prompt_tokens` vs
 `cache_creation_input_tokens` on `response` lines in `logs/`.
 
 ## Chat
