@@ -29,6 +29,7 @@ def peer_chat(
     conversation_id: str | None = None,
     cwd: str | None = None,
     host_max_tool_turns: int | None = None,
+    compact: bool | None = None,
 ) -> str:
     """Ask the peer agent; pass back conversation_id to continue the thread.
 
@@ -45,6 +46,8 @@ def peer_chat(
         payload["conversation_id"] = conversation_id
     if host_max_tool_turns is not None:
         payload["host_max_tool_turns"] = host_max_tool_turns
+    if compact is not None:
+        payload["compact"] = compact
     response = httpx.post(
         f"http://127.0.0.1:{_CONFIG['port']}/chat",
         json=payload,

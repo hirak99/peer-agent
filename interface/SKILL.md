@@ -69,3 +69,8 @@ The CLI defaults `--cwd` to its own working directory; `--null-cwd` sends
   with exact search-and-replace (unique match, or `replace_all` for all).
 - Every turn is logged to `logs/<conversation_id>.jsonl`.
 - Prefer one thread per task so the peer keeps context.
+- Long threads auto-compact (old turns → summary, recent kept); full history
+  stays in `logs/`. Force with `"compact":true`, skip with `"compact":false`.
+  Manual: `POST /compact '{"conversation_id":"ID"}'`. If a turn ever fails
+  with context-overflow, it retries once after compaction; otherwise just
+  resend — the next turn compacts first.

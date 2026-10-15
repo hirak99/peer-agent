@@ -33,6 +33,22 @@ class ToolEvent:
 
 
 @dataclasses.dataclass
+class CompactionRecord:
+    """Describes one history compaction for logging."""
+
+    # Messages before compaction.
+    pre_messages: int
+    # Messages after compaction.
+    post_messages: int
+    # Estimated input tokens before compaction.
+    pre_tokens_est: int
+    # Estimated input tokens after compaction.
+    post_tokens_est: int
+    # Why compaction ran.
+    reason: str
+
+
+@dataclasses.dataclass
 class Completion:
     """Final reply text plus observability side-channels."""
 
@@ -48,6 +64,8 @@ class Completion:
     hint: str | None = None
     # Tool turns executed to produce this reply.
     tool_turns: int = 0
+    # Compaction performed during error recovery, if any.
+    compaction: CompactionRecord | None = None
 
 
 class Backend(abc.ABC):
@@ -60,6 +78,18 @@ class Backend(abc.ABC):
     @abc.abstractmethod
     def describe(self) -> dict[str, str]:
         """Returns backend/model identity for logging."""
+
+    def get_context_window(self) -> int | None:
+        """Returns the model input budget, or None when unknown."""
+        return None
+
+    def get_max_output_tokens(self) -> int | None:
+        """Returns the per-turn output reserve, or None when unknown."""
+        return None
+
+    def summarize(self, messages: list[dict[str, Any]]) -> str:
+        """Distills messages into a handoff summary for compaction."""
+        raise NotImplementedError("summarize is not supported by this backend.")
 
     @abc.abstractmethod
     def complete(

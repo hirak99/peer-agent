@@ -84,6 +84,25 @@ class ToolResultEvent(BaseEvent):
     failure_reason: str | None = None
 
 
+class CompactionEvent(BaseEvent):
+    """A history compaction that replaced old turns with a summary."""
+
+    # Discriminator for the LogEvent union.
+    type: Literal["compaction"] = "compaction"
+    # Messages before compaction.
+    pre_messages: int
+    # Messages after compaction.
+    post_messages: int
+    # Estimated input tokens before compaction.
+    pre_tokens_est: int
+    # Estimated input tokens after compaction.
+    post_tokens_est: int
+    # Model that wrote the summary.
+    model: str
+    # Why compaction ran.
+    reason: Literal["margin", "forced", "error_recovery", "manual"]
+
+
 class SystemPromptEvent(BaseEvent):
     """The system prompt at conversation start or when it changes."""
 
@@ -96,6 +115,11 @@ class SystemPromptEvent(BaseEvent):
 
 
 LogEvent = Annotated[
-    PromptEvent | ResponseEvent | ToolCallEvent | ToolResultEvent | SystemPromptEvent,
+    PromptEvent
+    | ResponseEvent
+    | ToolCallEvent
+    | ToolResultEvent
+    | SystemPromptEvent
+    | CompactionEvent,
     pydantic.Field(discriminator="type"),
 ]

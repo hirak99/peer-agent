@@ -7,6 +7,7 @@ from collections.abc import Iterator
 
 import anthropic
 
+from service import compaction
 from service import log_events
 from service.backends import base
 from service.tools import registry
@@ -21,6 +22,18 @@ _ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_HOST_MAX_TOOL_TURNS: int | None = None
 # Default per-turn output budget; override with --max-tokens.
 DEFAULT_MAX_TOKENS = 8192
+# Default token budget for the compaction summary reply.
+DEFAULT_COMPACT_SUMMARY_MAX_TOKENS = 2000
+# Substrings marking a rejected call as context overflow (not other 400s).
+_OVERFLOW_MARKERS = (
+    "too long",
+    "too large",
+    "exceed",
+    "max_input",
+    "context length",
+    "maximum context",
+    "prompt is too",
+)
 # After this many consecutive identical (name+input) *failing* calls, hold
 # the next one (do not execute) and ask the model to justify retrying.
 # The hold consumes the streak, so the retry always runs. Successes and
@@ -40,6 +53,9 @@ class AnthropicBackend(base.Backend):
         tools: registry.ToolRegistry,
         host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
         max_tokens: int = DEFAULT_MAX_TOKENS,
+        compact_model: str | None = None,
+        compact_summary_max_tokens: int = DEFAULT_COMPACT_SUMMARY_MAX_TOKENS,
+        compact_keep_messages: int = compaction.DEFAULT_KEEP_MESSAGES,
     ) -> None:
         api_key = os.environ.get(_ANTHROPIC_KEY_ENV)
         if not api_key:
@@ -51,23 +67,99 @@ class AnthropicBackend(base.Backend):
         self._tools = tools
         self._default_host_max_tool_turns = host_max_tool_turns
         self._max_tokens = max_tokens
+        self._compact_model = compact_model or model
+        self._compact_summary_max_tokens = compact_summary_max_tokens
+        self._compact_keep = compact_keep_messages
+        self._max_input_tokens: int | None = None
         self._client = anthropic.Anthropic(api_key=api_key)
         self._validate_model()
 
     def _validate_model(self) -> None:
         """Pre-flights model id and key via the free Models API (no tokens)."""
         try:
-            self._client.models.retrieve(self._model)
+            info = self._client.models.retrieve(self._model)
         except anthropic.NotFoundError as exc:
             raise RuntimeError(f"Unknown model: {self._model}.") from exc
         except anthropic.AuthenticationError as exc:
             raise RuntimeError(
                 f"Invalid {_ANTHROPIC_KEY_ENV}: authentication failed."
             ) from exc
+        window = getattr(info, "max_input_tokens", None)
+        self._max_input_tokens = window if isinstance(window, int) else None
 
     def describe(self) -> dict[str, str]:
         """Returns Anthropic backend identity for logging."""
         return {"model": self._model, "backend": "anthropic"}
+
+    def get_context_window(self) -> int | None:
+        """Returns the model input budget stashed at startup."""
+        window = getattr(self, "_max_input_tokens", None)
+        return window if isinstance(window, int) else None
+
+    def get_max_output_tokens(self) -> int | None:
+        """Returns the per-turn output reserve for margin checks."""
+        reserve = getattr(self, "_max_tokens", None)
+        return reserve if isinstance(reserve, int) else None
+
+    @staticmethod
+    def is_context_overflow(exc: BaseException) -> bool:
+        """Reports whether an API error means the history no longer fits."""
+        status = getattr(exc, "status_code", None)
+        if status not in (400, 413):
+            return False
+        text = str(exc).lower()
+        return any(marker in text for marker in _OVERFLOW_MARKERS)
+
+    def summarize(self, messages: list[dict[str, Any]]) -> str:
+        """Distills history into a handoff summary with tools disabled."""
+        trimmed = compaction.truncate_for_summary(messages)
+        if not trimmed:
+            return ""
+        if isinstance(trimmed[-1].get("content"), str):
+            summarizer_messages: list[dict[str, Any]] = [
+                *trimmed[:-1],
+                {
+                    "role": "user",
+                    "content": trimmed[-1]["content"]
+                    + "\n\nWrite the handoff summary now.",
+                },
+            ]
+        else:
+            summarizer_messages = [
+                *trimmed,
+                {"role": "user", "content": "Write the handoff summary now."},
+            ]
+        compact_model = getattr(self, "_compact_model", getattr(self, "_model", ""))
+        summary_budget = getattr(self, "_compact_summary_max_tokens", 2000)
+        response = self._client.messages.create(
+            model=compact_model,
+            max_tokens=summary_budget,
+            system=compaction.SUMMARY_SYSTEM_PROMPT,
+            messages=cast(list[anthropic.types.MessageParam], summarizer_messages),
+        )
+        return "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+
+    def _compact_for_recovery(
+        self, messages: list[dict[str, Any]]
+    ) -> base.CompactionRecord | None:
+        """Replaces old history with a summary in place; None when too short."""
+        pre_est = compaction.estimate_tokens(messages)
+        keep = getattr(self, "_compact_keep", compaction.DEFAULT_KEEP_MESSAGES)
+        old, recent = compaction.split_for_compaction(messages, keep)
+        if not old:
+            return None
+        summary = self.summarize(compaction.truncate_for_summary(old))
+        compacted = compaction.build_compacted_history(summary, recent, len(old))
+        messages[:] = compacted
+        return base.CompactionRecord(
+            pre_messages=len(old) + len(recent),
+            post_messages=len(compacted),
+            pre_tokens_est=pre_est,
+            post_tokens_est=compaction.estimate_tokens(compacted),
+            reason="error_recovery",
+        )
 
     @staticmethod
     def _to_token_usage(usage: Any) -> log_events.TokenUsage:
@@ -283,18 +375,30 @@ class AnthropicBackend(base.Backend):
         tool_turns = 0
         text_prefix = ""
         turn = 0
+        recovered: base.CompactionRecord | None = None
         while True:
             if cap is not None and tool_turns >= cap:
-                return self._yield_completion(
+                completion = self._yield_completion(
                     messages, text_prefix, tool_events, usage, tool_turns, cap
                 )
-            response = self._client.messages.create(
-                model=self._model,
-                max_tokens=self._max_tokens,
-                system=self._system_prompt,
-                messages=self._message_params(messages),
-                **self._extra_params(context),
-            )
+                completion.compaction = recovered
+                return completion
+            try:
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=self._max_tokens,
+                    system=self._system_prompt,
+                    messages=self._message_params(messages),
+                    **self._extra_params(context),
+                )
+            except Exception as exc:
+                if recovered is not None or not self.is_context_overflow(exc):
+                    raise
+                record = self._compact_for_recovery(messages)
+                if record is None:
+                    raise
+                recovered = record
+                continue
             if response.usage is not None:
                 usage = self._accumulate_usage(
                     usage, self._to_token_usage(response.usage)
@@ -313,6 +417,7 @@ class AnthropicBackend(base.Backend):
                     status="done",
                     hint=None,
                     tool_turns=tool_turns,
+                    compaction=recovered,
                 )
             # Collect any text accompanying tool_use for the yield summary.
             partial = "".join(
@@ -350,6 +455,8 @@ class AnthropicBackend(base.Backend):
         seen: list[tuple[str, bool]] = []
         usage: log_events.TokenUsage | None = None
         tool_turns = 0
+        recovered: base.CompactionRecord | None = None
+        yielded_any = False
         while True:
             if cap is not None and tool_turns >= cap:
                 completion = self._yield_completion(
@@ -360,16 +467,32 @@ class AnthropicBackend(base.Backend):
                     meta["status"] = completion.status
                     meta["hint"] = completion.hint
                     meta["tool_turns"] = completion.tool_turns
+                    meta["compaction"] = recovered
                 yield completion.text
                 return
-            with self._client.messages.stream(
-                model=self._model,
-                max_tokens=self._max_tokens,
-                system=self._system_prompt,
-                messages=self._message_params(messages),
-                **self._extra_params(context),
-            ) as stream:
+            try:
+                stream_manager = self._client.messages.stream(
+                    model=self._model,
+                    max_tokens=self._max_tokens,
+                    system=self._system_prompt,
+                    messages=self._message_params(messages),
+                    **self._extra_params(context),
+                )
+            except Exception as exc:
+                if (
+                    recovered is not None
+                    or yielded_any
+                    or not self.is_context_overflow(exc)
+                ):
+                    raise
+                record = self._compact_for_recovery(messages)
+                if record is None:
+                    raise
+                recovered = record
+                continue
+            with stream_manager as stream:
                 for text in stream.text_stream:
+                    yielded_any = True
                     yield text
                 final = stream.get_final_message()
             final_usage = getattr(final, "usage", None)
@@ -386,6 +509,7 @@ class AnthropicBackend(base.Backend):
                     meta["status"] = "done"
                     meta["hint"] = None
                     meta["tool_turns"] = tool_turns
+                    meta["compaction"] = recovered
                 return
             messages.append(
                 {

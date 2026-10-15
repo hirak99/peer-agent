@@ -14,6 +14,10 @@ class StubBackend(base.Backend):
         """Returns stub identity for logging."""
         return {"model": "stub", "backend": "stub"}
 
+    def summarize(self, messages: list[dict[str, Any]]) -> str:
+        """Returns a canned summary sized to the input for tests."""
+        return f"stub-summary of {len(messages)} messages"
+
     def complete(
         self,
         messages: list[dict[str, Any]],

@@ -10,6 +10,7 @@ import threading
 
 import fastapi
 
+from service import compaction
 from service import event_log
 from service import log_events
 from service import models
@@ -48,6 +49,8 @@ class TurnState:
     context: base.ToolContext
     # Host-controlled tool-turn budget for this reply.
     cap: int | None
+    # Proactive compaction applied in begin_turn, if any.
+    compaction: base.CompactionRecord | None = None
 
 
 def resolve_id(
@@ -102,6 +105,29 @@ def maybe_emit_system_prompt(
         conversations.save_system_prompt(conversation_id, system_prompt)
 
 
+def log_compaction(
+    events: event_log.EventLog,
+    conversation_id: str,
+    model: str,
+    record: base.CompactionRecord,
+) -> None:
+    """Records a compaction event for later inspection."""
+    reason = record.reason
+    if reason not in ("margin", "forced", "error_recovery", "manual"):
+        reason = "margin"
+    events.record(
+        conversation_id,
+        log_events.CompactionEvent(
+            pre_messages=record.pre_messages,
+            post_messages=record.post_messages,
+            pre_tokens_est=record.pre_tokens_est,
+            post_tokens_est=record.post_tokens_est,
+            model=model,
+            reason=reason,  # type: ignore[arg-type]
+        ),
+    )
+
+
 def log_completion(
     backend: base.Backend,
     events: event_log.EventLog,
@@ -138,6 +164,51 @@ def log_completion(
     )
 
 
+def _maybe_compact_proactive(
+    events: event_log.EventLog,
+    backend: base.Backend | None,
+    config: compaction.CompactionConfig | None,
+    history: list[dict[str, Any]],
+    forced: bool,
+) -> base.CompactionRecord | None:
+    """Compacts history in place when forced or over the margin."""
+    if backend is None or (not forced and config is None):
+        return None
+    active = config or compaction.CompactionConfig()
+    keep = compaction.resolve_keep(active)
+    old, recent = compaction.split_for_compaction(history, keep)
+    if not old:
+        return None
+    if not forced:
+        window = compaction.resolve_window(backend, active)
+        if window is None:
+            return None
+        reserve = backend.get_max_output_tokens()
+        if not compaction.needs_compaction(
+            compaction.estimate_tokens(history),
+            reserve,
+            compaction.resolve_margin(active),
+            window,
+        ):
+            return None
+    pre_messages = len(history)
+    pre_est = compaction.estimate_tokens(history)
+    try:
+        summary = backend.summarize(compaction.truncate_for_summary(old))
+    except Exception:
+        return None
+    compacted = compaction.build_compacted_history(summary, recent, len(old))
+    history[:] = compacted
+    record = base.CompactionRecord(
+        pre_messages=pre_messages,
+        post_messages=len(compacted),
+        pre_tokens_est=pre_est,
+        post_tokens_est=compaction.estimate_tokens(compacted),
+        reason="forced" if forced else "margin",
+    )
+    return record
+
+
 def begin_turn(
     conversations: store.ConversationStore,
     events: event_log.EventLog,
@@ -145,6 +216,8 @@ def begin_turn(
     default_host_max_tool_turns: int | None,
     request: models.ChatRequest,
     conversation_id: str,
+    backend: base.Backend | None = None,
+    compaction_config: compaction.CompactionConfig | None = None,
 ) -> TurnState:
     """Loads history and records the new prompt; call inside the id's lock."""
     if request.conversation_id is not None and not conversations.exists(
@@ -158,12 +231,64 @@ def begin_turn(
         log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
     )
     history.append({"role": "user", "content": request.prompt})
+    record: base.CompactionRecord | None = None
+    if request.compact is not False:
+        record = _maybe_compact_proactive(
+            events, backend, compaction_config, history, forced=request.compact is True
+        )
+        if record is not None and backend is not None:
+            log_compaction(events, conversation_id, backend.describe()["model"], record)
     return TurnState(
         conversation_id=conversation_id,
         history=history,
         context=resolve_context(request),
         cap=resolve_host_cap(request, default_host_max_tool_turns),
+        compaction=record,
     )
+
+
+def compact_conversation(
+    conversations: store.ConversationStore,
+    events: event_log.EventLog,
+    backend: base.Backend,
+    config: compaction.CompactionConfig | None,
+    conversation_id: str,
+) -> dict[str, Any]:
+    """Compacts stored history on demand for POST /compact."""
+    if not conversations.exists(conversation_id):
+        raise fastapi.HTTPException(status_code=404, detail="Unknown conversation_id.")
+    history = conversations.load(conversation_id)
+    active = config or compaction.CompactionConfig()
+    old, recent = compaction.split_for_compaction(
+        history, compaction.resolve_keep(active)
+    )
+    if not old:
+        return {
+            "conversation_id": conversation_id,
+            "compacted": False,
+            "pre_messages": len(history),
+            "post_messages": len(history),
+        }
+    pre_est = compaction.estimate_tokens(history)
+    summary = backend.summarize(compaction.truncate_for_summary(old))
+    compacted = compaction.build_compacted_history(summary, recent, len(old))
+    conversations.save(conversation_id, compacted)
+    record = base.CompactionRecord(
+        pre_messages=len(history),
+        post_messages=len(compacted),
+        pre_tokens_est=pre_est,
+        post_tokens_est=compaction.estimate_tokens(compacted),
+        reason="manual",
+    )
+    log_compaction(events, conversation_id, backend.describe()["model"], record)
+    return {
+        "conversation_id": conversation_id,
+        "compacted": True,
+        "pre_messages": record.pre_messages,
+        "post_messages": record.post_messages,
+        "pre_tokens_est": record.pre_tokens_est,
+        "post_tokens_est": record.post_tokens_est,
+    }
 
 
 def finish_turn(
@@ -174,6 +299,13 @@ def finish_turn(
 ) -> models.ChatResponse:
     """Runs the backend, persists history, and builds the /chat response."""
     completion = backend.complete(state.history, state.context, state.cap)
+    if completion.compaction is not None:
+        log_compaction(
+            events,
+            state.conversation_id,
+            backend.describe()["model"],
+            completion.compaction,
+        )
     conversations.save(state.conversation_id, state.history)
     log_completion(backend, events, state.conversation_id, completion)
     return models.ChatResponse(
@@ -200,6 +332,11 @@ def finish_stream_turn(
     status = str(meta.get("status", "done"))
     hint = meta.get("hint")
     tool_turns = int(meta.get("tool_turns", len(tool_events)))
+    record = meta.get("compaction")
+    if isinstance(record, base.CompactionRecord):
+        log_compaction(
+            events, state.conversation_id, backend.describe()["model"], record
+        )
     conversations.save(state.conversation_id, state.history)
     log_completion(
         backend,

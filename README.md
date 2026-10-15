@@ -50,6 +50,19 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 # {"text":"...","conversation_id":"..."}
 ```
 
+## Compaction
+
+Long threads auto-compact: when `est_history + max_tokens + --compact-margin-tokens`
+exceeds the model's input budget (read from the Models API at startup, 1M for
+current Claude 5.5 models), old turns are summarized and replaced, keeping the
+last `--compact-keep-messages` (default 20). Full history stays in `logs/`;
+compactions are logged as `compaction` events. Per-turn override:
+`{"compact": true/false}` (CLI: `--compact` / `--no-compact`). Manual:
+`POST /compact {"conversation_id": "..."}`. On context-overflow the turn
+retries once after compaction instead of failing. Server knobs:
+`--compact-model` (e.g. haiku for cheap summaries), `--compact-summary-max-tokens`,
+`--compact-context-window`.
+
 ## Skill (Option A)
 
 See `interface/SKILL.md` for the plain-HTTP instructions any agent can follow.
@@ -76,7 +89,8 @@ This exposes a `peer_chat(prompt, conversation_id?, cwd?)` tool.
 
 ## Layout
 
-- `service/server.py` — FastAPI app: `POST /chat`, `POST /chat/stream`, `GET /health`
+- `service/server.py` — FastAPI app: `POST /chat`, `POST /chat/stream`, `POST /compact`, `GET /health`
+- `service/compaction.py` — margin trigger, tool-pair-safe split, summary helpers
 - `service/backends/` — `base.py` interface, `anthropic_backend.py`, `stub_backend.py`
 - `service/tools/` — `registry.py` (open for new tools), `bash_tool.py`, `read_tool.py`, `edit_tool.py`
 - `service/store.py`, `service/event_log.py` — `conversations/*.json`, `logs/*.jsonl`

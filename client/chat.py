@@ -37,6 +37,13 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Auto-send 'continue' while the server asks for continuation.",
     )
+    compact_group = parser.add_mutually_exclusive_group()
+    compact_group.add_argument(
+        "--compact", action="store_true", help="Force compaction this turn."
+    )
+    compact_group.add_argument(
+        "--no-compact", action="store_true", help="Inhibit compaction this turn."
+    )
     return parser.parse_args()
 
 
@@ -49,6 +56,10 @@ def _build_payload(args: argparse.Namespace, prompt: str) -> dict[str, Any]:
         payload["conversation_id"] = args.conversation_id
     if args.host_max_tool_turns is not None:
         payload["host_max_tool_turns"] = args.host_max_tool_turns
+    if args.compact:
+        payload["compact"] = True
+    elif args.no_compact:
+        payload["compact"] = False
     return payload
 
 
