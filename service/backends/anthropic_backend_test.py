@@ -208,8 +208,10 @@ def test_cache_gating_survives_a_lone_idle_gap() -> None:
 
 
 def test_cache_gating_suspends_on_sustained_idleness() -> None:
-    """Two consecutive over-window gaps suspend; brisk cadence re-arms."""
+    """Three consecutive over-window gaps suspend; brisk cadence re-arms."""
     backend = _wired_backend()
+    _seed_idle(backend, 1, 400)
+    assert backend._should_cache() is True
     _seed_idle(backend, 2, 400)
     assert backend._should_cache() is False
     assert backend._cache_idle_streak == 3
@@ -246,6 +248,6 @@ def test_complete_skips_breakpoints_when_sustained_idle() -> None:
     history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
     backend.complete(history, base.ToolContext(workdir=None), None)
     assert "cache_control" in json.dumps(calls[0])
-    _seed_idle(backend, 1, 400)
+    _seed_idle(backend, 2, 400)
     backend.complete(history, base.ToolContext(workdir=None), None)
     assert "cache_control" not in json.dumps(calls[1])

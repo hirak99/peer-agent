@@ -48,10 +48,12 @@ _SEEN_HISTORY_CAP = 512
 _CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
 # Breakpoints both read the cache and (re)write it at +25%; a write nobody
 # re-reads before the TTL is pure surcharge. Breakeven needs only ~0.2 hit
-# probability, so attach by default and suspend only on sustained idleness:
-# consecutive over-window gaps that show nobody is reading.
+# probability, so attach by default and suspend only on sustained idleness.
+# Tune this so that after N consecutive misses P(next request hits) < 0.2083
+# (breakeven); deeper slow bursts than N stay attached, fully dead sessions
+# waste one extra write per level.
 _CACHE_FRESHNESS_WINDOW_S = 5 * 60
-_CACHE_IDLE_DISABLE_AFTER = 2
+_CACHE_IDLE_DISABLE_AFTER = 3
 
 
 class AnthropicBackend(base.Backend):

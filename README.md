@@ -39,11 +39,22 @@ mid-thread model switch stays attributable.
 Every request marks ephemeral cache breakpoints on the system prompt, the
 last tool definition, and the history tail, so repeated history is served
 from cache (5-min TTL) instead of rebilled. Breakpoints attach by default and
-suspend only after 2 consecutive gaps over 5 minutes — breakeven needs just
-~0.2 hit probability, so only sustained idleness (long tool runs, idle
-gaps) transparently pays base price instead of a doomed +25% write. Watch
-`cached_prompt_tokens` vs `cache_creation_input_tokens` on `response` lines
-in `logs/`.
+suspend only after `n = _CACHE_IDLE_DISABLE_AFTER` consecutive gaps over
+5 minutes.
+
+Breakeven occurs at probability of cache hit h, then -
+($/Write - $/Cache Read) h = ($/WriteCached - $/Write) (1 - h)
+=> h = ($/WriteCached - $/Write) / ($/WriteCached - $/Cache Read)
+
+Ideally we need to tune so that `n` number of misses implies
+prob(next hit) < h.
+
+Watch `cached_prompt_tokens` vs `cache_creation_input_tokens` on `response`
+lines in `logs/`.
+
+Example: For Anthropic, breakeven h = 1 / 4.8 = 0.2083, and we can set `n` = 3 if
+we feel after 3 misses, P(next hit) < 0.2083.
+
 
 ## Chat
 
