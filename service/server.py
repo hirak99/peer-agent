@@ -304,6 +304,12 @@ def main() -> None:
     parser.add_argument(
         "--bash-max-bytes", type=int, default=bash_tool.DEFAULT_BASH_MAX_BYTES
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Print each log event (the exact JSONL line) to stderr live.",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     dotenv.load_dotenv(_PROJECT_ROOT / ".env")
@@ -318,7 +324,7 @@ def main() -> None:
             bash_max_bytes=args.bash_max_bytes,
         ),
         store.ConversationStore(_CONVERSATIONS_DIR),
-        event_log.EventLog(_LOGS_DIR),
+        event_log.EventLog(_LOGS_DIR, verbose=args.verbose),
         args.system_prompt,
         default_max_tool_turns=args.max_tool_turns,
     )
