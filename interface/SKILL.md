@@ -49,11 +49,12 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 ```
 
 Weak models: do not stop at the first partial text. Loop on
-`continuation_required` — that is the gate. Per-reply tool budget defaults
-to 30; pass `"max_tool_turns": 100` (or explicit `null` for unbounded)
-to raise it for a known-long task.
+`continuation_required` — that is the gate. Peer tool turns are unlimited
+by default; the host may set a host-controlled budget per reply with
+`"host_max_tool_turns": N` (or `--host-max-tool-turns N` on the server)
+to force a checkpoint it must resume via `continue`.
 
-Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd] [--loop] [--max-tool-turns N]`.
+Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd] [--loop] [--host-max-tool-turns N]`.
 `--loop` auto-sends `continue` while the server asks for it.
 The CLI defaults `--cwd` to its own working directory; `--null-cwd` sends
 `null` for pure Q&A turns (the peer then gets no `bash` tool that turn).

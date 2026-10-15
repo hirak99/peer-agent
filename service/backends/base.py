@@ -64,7 +64,7 @@ class Backend(abc.ABC):
         self,
         messages: list[dict[str, Any]],
         context: ToolContext,
-        max_tool_turns: int | None = 30,
+        host_max_tool_turns: int | None = None,
     ) -> Completion:
         """Runs the model (including tool turns) to a final reply."""
 
@@ -73,11 +73,11 @@ class Backend(abc.ABC):
         messages: list[dict[str, Any]],
         tool_events: list[ToolEvent],
         context: ToolContext,
-        max_tool_turns: int | None = 30,
+        host_max_tool_turns: int | None = None,
         meta: dict[str, Any] | None = None,
     ) -> Iterator[str]:
         """Yields reply text pieces; appends observed tool events."""
-        completion = self.complete(messages, context, max_tool_turns)
+        completion = self.complete(messages, context, host_max_tool_turns)
         tool_events.extend(completion.tool_events)
         if meta is not None:
             meta["usage"] = completion.usage

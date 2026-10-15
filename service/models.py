@@ -17,10 +17,11 @@ class ChatRequest(pydantic.BaseModel):
     # Host working directory for tool execution. Required; null withholds
     # filesystem tools (bash) for this turn.
     cwd: str | None
-    # Soft tool-turn budget for this reply. Omitted uses the server default
-    # (30); explicit null means unbounded. On budget spend the server yields
-    # status=continuation_required instead of crashing; send "continue".
-    max_tool_turns: int | None = None
+    # Host-controlled tool-turn budget for this reply. None (default) means
+    # unlimited. Set an int to make the server yield with
+    # status=continuation_required when the peer spends that many tool
+    # turns; send "continue" with the same conversation_id to resume.
+    host_max_tool_turns: int | None = None
 
 
 class ChatResponse(pydantic.BaseModel):

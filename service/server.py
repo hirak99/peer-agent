@@ -53,7 +53,7 @@ def build_backend(
     kind: str,
     model: str,
     system_prompt: str,
-    max_tool_turns: int | None = anthropic_backend.DEFAULT_MAX_TOOL_TURNS,
+    host_max_tool_turns: int | None = anthropic_backend.DEFAULT_HOST_MAX_TOOL_TURNS,
     max_tokens: int = anthropic_backend.DEFAULT_MAX_TOKENS,
     bash_timeout_s: int = bash_tool.DEFAULT_BASH_TIMEOUT_S,
     bash_max_bytes: int = bash_tool.DEFAULT_BASH_MAX_BYTES,
@@ -66,20 +66,19 @@ def build_backend(
             model=model,
             system_prompt=system_prompt,
             tools=build_default_registry(bash_timeout_s, bash_max_bytes),
-            max_tool_turns=max_tool_turns,
+            host_max_tool_turns=host_max_tool_turns,
             max_tokens=max_tokens,
         )
     raise ValueError(f"Unknown backend: {kind}")
 
 
-def _resolve_max_turns(
+def _resolve_host_cap(
     request: models.ChatRequest, server_default: int | None
 ) -> int | None:
-    """Resolves per-reply tool budget: omitted uses server default."""
-    if "max_tool_turns" not in request.model_fields_set:
-        return server_default
-    # Explicit null means unbounded.
-    return request.max_tool_turns
+    """Resolves the host-controlled tool budget: request wins, else server."""
+    if request.host_max_tool_turns is not None:
+        return request.host_max_tool_turns
+    return server_default
 
 
 def _resolve_history(
@@ -163,7 +162,8 @@ def build_app(
     conversations: store.ConversationStore,
     events: event_log.EventLog,
     system_prompt: str,
-    default_max_tool_turns: int | None = anthropic_backend.DEFAULT_MAX_TOOL_TURNS,
+    default_host_max_tool_turns: int
+    | None = anthropic_backend.DEFAULT_HOST_MAX_TOOL_TURNS,
 ) -> fastapi.FastAPI:
     """Builds the FastAPI app over the given backend and storage."""
     app = fastapi.FastAPI(title="peer-agent")
@@ -182,7 +182,7 @@ def build_app(
             log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
         )
         history.append({"role": "user", "content": request.prompt})
-        cap = _resolve_max_turns(request, default_max_tool_turns)
+        cap = _resolve_host_cap(request, default_host_max_tool_turns)
         completion = backend.complete(history, context, cap)
         conversations.save(conversation_id, history)
         _log_completion(backend, events, conversation_id, completion)
@@ -211,7 +211,7 @@ def build_app(
                     log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
                 )
                 history.append({"role": "user", "content": request.prompt})
-                cap = _resolve_max_turns(request, default_max_tool_turns)
+                cap = _resolve_host_cap(request, default_host_max_tool_turns)
                 tool_events: list[base.ToolEvent] = []
                 meta: dict[str, Any] = {}
                 pieces: list[str] = []
@@ -293,7 +293,9 @@ def main() -> None:
     parser.add_argument("--model", default=_DEFAULT_MODEL)
     parser.add_argument("--system-prompt", default=_DEFAULT_SYSTEM_PROMPT)
     parser.add_argument(
-        "--max-tool-turns", type=int, default=anthropic_backend.DEFAULT_MAX_TOOL_TURNS
+        "--host-max-tool-turns",
+        type=int,
+        default=anthropic_backend.DEFAULT_HOST_MAX_TOOL_TURNS,
     )
     parser.add_argument(
         "--max-tokens", type=int, default=anthropic_backend.DEFAULT_MAX_TOKENS
@@ -318,7 +320,7 @@ def main() -> None:
             args.backend,
             args.model,
             args.system_prompt,
-            max_tool_turns=args.max_tool_turns,
+            host_max_tool_turns=args.host_max_tool_turns,
             max_tokens=args.max_tokens,
             bash_timeout_s=args.bash_timeout,
             bash_max_bytes=args.bash_max_bytes,
@@ -326,7 +328,7 @@ def main() -> None:
         store.ConversationStore(_CONVERSATIONS_DIR),
         event_log.EventLog(_LOGS_DIR, verbose=args.verbose),
         args.system_prompt,
-        default_max_tool_turns=args.max_tool_turns,
+        default_host_max_tool_turns=args.host_max_tool_turns,
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

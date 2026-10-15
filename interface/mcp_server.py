@@ -28,13 +28,14 @@ def peer_chat(
     prompt: str,
     conversation_id: str | None = None,
     cwd: str | None = None,
-    max_tool_turns: int | None = None,
+    host_max_tool_turns: int | None = None,
 ) -> str:
     """Ask the peer agent; pass back conversation_id to continue the thread.
 
     If the result status is continuation_required, call peer_chat again with
     prompt='continue' and the same conversation_id. Repeat until status is
-    done. Pass max_tool_turns to raise the per-reply tool budget.
+    done. Pass host_max_tool_turns to set a host-controlled per-reply
+    tool budget (default: unlimited).
     """
     payload: dict[str, Any] = {
         "prompt": prompt,
@@ -42,8 +43,8 @@ def peer_chat(
     }
     if conversation_id is not None:
         payload["conversation_id"] = conversation_id
-    if max_tool_turns is not None:
-        payload["max_tool_turns"] = max_tool_turns
+    if host_max_tool_turns is not None:
+        payload["host_max_tool_turns"] = host_max_tool_turns
     response = httpx.post(
         f"http://127.0.0.1:{_CONFIG['port']}/chat",
         json=payload,

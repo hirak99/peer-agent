@@ -14,9 +14,10 @@ from typing import Any, cast
 
 # Environment variable holding the Anthropic API key (never logged).
 _ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
-# Default soft cap on tool turns per reply; yields with continuation_required
-# instead of crashing. Per-request max_tool_turns overrides; None = unbounded.
-DEFAULT_MAX_TOOL_TURNS = 30
+# Default host-controlled cap on tool turns per reply; yields with
+# continuation_required instead of crashing. Per-request host_max_tool_turns
+# overrides; None (default) means unlimited.
+DEFAULT_HOST_MAX_TOOL_TURNS: int | None = None
 # Default per-turn output budget; override with --max-tokens.
 DEFAULT_MAX_TOKENS = 8192
 # After this many consecutive identical (name+input) calls, nudge the model
@@ -32,7 +33,7 @@ class AnthropicBackend(base.Backend):
         model: str,
         system_prompt: str,
         tools: registry.ToolRegistry,
-        max_tool_turns: int | None = DEFAULT_MAX_TOOL_TURNS,
+        host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
         max_tokens: int = DEFAULT_MAX_TOKENS,
     ) -> None:
         api_key = os.environ.get(_ANTHROPIC_KEY_ENV)
@@ -43,7 +44,7 @@ class AnthropicBackend(base.Backend):
         self._model = model
         self._system_prompt = system_prompt
         self._tools = tools
-        self._default_max_tool_turns = max_tool_turns
+        self._default_host_max_tool_turns = host_max_tool_turns
         self._max_tokens = max_tokens
         self._client = anthropic.Anthropic(api_key=api_key)
         self._validate_model()
@@ -200,7 +201,7 @@ class AnthropicBackend(base.Backend):
             {
                 "role": "user",
                 "content": (
-                    f"Tool budget of {cap} reached. Summarize progress so far, "
+                    f"Host tool budget of {cap} reached. Summarize progress so far, "
                     "state exactly what remains, then stop. The host will send "
                     "'continue' to resume if needed."
                 ),
@@ -221,7 +222,7 @@ class AnthropicBackend(base.Backend):
         text = (text_prefix + "\n\n" + summary).strip() if text_prefix else summary
         messages.append({"role": "assistant", "content": text})
         hint = (
-            f"Tool budget reached ({tool_turns}/{cap}). "
+            f"Host tool budget reached ({tool_turns}/{cap}). "
             "Re-call with prompt='continue' and the same conversation_id to resume."
         )
         return base.Completion(
@@ -237,13 +238,10 @@ class AnthropicBackend(base.Backend):
         self,
         messages: list[dict[str, Any]],
         context: base.ToolContext,
-        max_tool_turns: int | None = DEFAULT_MAX_TOOL_TURNS,
+        host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
     ) -> base.Completion:
         """Runs model turns until final text, executing tools between turns."""
-        cap = max_tool_turns if max_tool_turns is not None else None
-        # Distinguish omitted (server already substituted its default) from
-        # explicit None (unbounded): server passes through, backend default
-        # only applies when the caller used the base-class default sentinel.
+        cap = host_max_tool_turns
         tool_events: list[base.ToolEvent] = []
         seen_keys: list[str] = []
         usage: log_events.TokenUsage | None = None
@@ -309,11 +307,11 @@ class AnthropicBackend(base.Backend):
         messages: list[dict[str, Any]],
         tool_events: list[base.ToolEvent],
         context: base.ToolContext,
-        max_tool_turns: int | None = DEFAULT_MAX_TOOL_TURNS,
+        host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
         meta: dict[str, Any] | None = None,
     ) -> Iterator[str]:
         """Streams reply tokens live, running tool turns between streams."""
-        cap = max_tool_turns
+        cap = host_max_tool_turns
         seen_keys: list[str] = []
         usage: log_events.TokenUsage | None = None
         tool_turns = 0

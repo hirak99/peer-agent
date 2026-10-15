@@ -27,10 +27,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--null-cwd", action="store_true")
     parser.add_argument(
-        "--max-tool-turns",
+        "--host-max-tool-turns",
         type=int,
         default=None,
-        help="Tool-turn budget for this reply (default: server default 30).",
+        help="Host-controlled tool-turn budget (default: unlimited).",
     )
     parser.add_argument(
         "--loop",
@@ -47,8 +47,8 @@ def _build_payload(args: argparse.Namespace, prompt: str) -> dict[str, Any]:
     }
     if args.conversation_id is not None:
         payload["conversation_id"] = args.conversation_id
-    if args.max_tool_turns is not None:
-        payload["max_tool_turns"] = args.max_tool_turns
+    if args.host_max_tool_turns is not None:
+        payload["host_max_tool_turns"] = args.host_max_tool_turns
     return payload
 
 
