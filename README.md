@@ -78,7 +78,7 @@ This exposes a `peer_chat(prompt, conversation_id?, cwd?)` tool.
 
 - `service/server.py` — FastAPI app: `POST /chat`, `POST /chat/stream`, `GET /health`
 - `service/backends/` — `base.py` interface, `anthropic_backend.py`, `stub_backend.py`
-- `service/tools/` — `registry.py` (open for new tools), `bash_tool.py`
+- `service/tools/` — `registry.py` (open for new tools), `bash_tool.py`, `read_tool.py`, `edit_tool.py`
 - `service/store.py`, `service/event_log.py` — `conversations/*.json`, `logs/*.jsonl`
 - `client/chat.py`, `interface/mcp_server.py`
 

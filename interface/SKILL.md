@@ -65,6 +65,7 @@ The CLI defaults `--cwd` to its own working directory; `--null-cwd` sends
   Relative/missing paths return 400, a missing field returns 422.
 - Unknown `conversation_id` returns 404; drop the id and retry to start fresh.
 - The peer can run `bash` and `read` (line-numbered file slices) server-side;
-  ask it to run commands or read files when useful.
+  ask it to run commands or read files when useful. It can also `edit` files
+  with exact search-and-replace (unique match, or `replace_all` for all).
 - Every turn is logged to `logs/<conversation_id>.jsonl`.
 - Prefer one thread per task so the peer keeps context.

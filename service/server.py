@@ -18,6 +18,7 @@ from service.backends import anthropic_backend
 from service.backends import base
 from service.backends import stub_backend
 from service.tools import bash_tool
+from service.tools import edit_tool
 from service.tools import read_tool
 from service.tools import registry
 
@@ -48,6 +49,7 @@ def build_default_registry(
     tools = registry.ToolRegistry()
     tools.register(bash_tool.build_bash_tool(timeout_s, max_bytes))
     tools.register(read_tool.build_read_tool(max_bytes=max_bytes))
+    tools.register(edit_tool.build_edit_tool())
     return tools
 
 
