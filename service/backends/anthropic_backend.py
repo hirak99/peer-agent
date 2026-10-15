@@ -12,7 +12,7 @@ from service import log_events
 from service.backends import base
 from service.tools import registry
 
-from typing import Any, cast
+from typing import Any, cast, override
 
 # Environment variable holding the Anthropic API key (never logged).
 _ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
@@ -87,15 +87,18 @@ class AnthropicBackend(base.Backend):
         window = getattr(info, "max_input_tokens", None)
         self._max_input_tokens = window if isinstance(window, int) else None
 
+    @override
     def describe(self) -> dict[str, str]:
         """Returns Anthropic backend identity for logging."""
         return {"model": self._model, "backend": "anthropic"}
 
+    @override
     def get_context_window(self) -> int | None:
         """Returns the model input budget stashed at startup."""
         window = getattr(self, "_max_input_tokens", None)
         return window if isinstance(window, int) else None
 
+    @override
     def get_max_output_tokens(self) -> int | None:
         """Returns the per-turn output reserve for margin checks."""
         reserve = getattr(self, "_max_tokens", None)
@@ -110,6 +113,7 @@ class AnthropicBackend(base.Backend):
         text = str(exc).lower()
         return any(marker in text for marker in _OVERFLOW_MARKERS)
 
+    @override
     def summarize(self, messages: list[dict[str, Any]]) -> str:
         """Distills history into a handoff summary with tools disabled."""
         trimmed = compaction.truncate_for_summary(messages)
@@ -361,6 +365,7 @@ class AnthropicBackend(base.Backend):
             tool_turns=tool_turns,
         )
 
+    @override
     def complete(
         self,
         messages: list[dict[str, Any]],
@@ -442,6 +447,7 @@ class AnthropicBackend(base.Backend):
             tool_turns += 1
             turn += 1
 
+    @override
     def stream_text(
         self,
         messages: list[dict[str, Any]],

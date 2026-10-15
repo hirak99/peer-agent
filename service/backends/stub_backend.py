@@ -4,20 +4,23 @@ from collections.abc import Iterator
 
 from service.backends import base
 
-from typing import Any
+from typing import Any, override
 
 
 class StubBackend(base.Backend):
     """Echoes the last user message without calling any provider."""
 
+    @override
     def describe(self) -> dict[str, str]:
         """Returns stub identity for logging."""
         return {"model": "stub", "backend": "stub"}
 
+    @override
     def summarize(self, messages: list[dict[str, Any]]) -> str:
         """Returns a canned summary sized to the input for tests."""
         return f"stub-summary of {len(messages)} messages"
 
+    @override
     def complete(
         self,
         messages: list[dict[str, Any]],
@@ -30,6 +33,7 @@ class StubBackend(base.Backend):
         messages.append({"role": "assistant", "content": text})
         return base.Completion(text=text, usage=None, tool_events=[])
 
+    @override
     def stream_text(
         self,
         messages: list[dict[str, Any]],
