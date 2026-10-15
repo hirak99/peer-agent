@@ -2,6 +2,8 @@
 
 import json
 import pathlib
+import threading
+import time
 
 import pydantic
 from fastapi import testclient
@@ -191,3 +193,51 @@ def test_chat_stream(tmp_path: pathlib.Path) -> None:
         json={"prompt": "again", "conversation_id": done_id, "cwd": str(tmp_path)},
     ).json()
     assert follow["conversation_id"] == done_id
+
+
+def test_concurrent_same_conversation_keeps_all_turns(tmp_path: pathlib.Path) -> None:
+    """Simultaneous turns on one id serialize instead of losing updates."""
+    backend = stub_backend.StubBackend()
+    unpatched = backend.complete
+
+    def _slow(
+        messages: list[dict[str, Any]], context: object, cap: object = None
+    ) -> object:
+        time.sleep(0.2)
+        return unpatched(messages, context, cap)  # type: ignore[arg-type]
+
+    backend.complete = _slow  # type: ignore[method-assign]
+    app = server.build_app(
+        backend,
+        store.ConversationStore(tmp_path / "conversations"),
+        event_log.EventLog(tmp_path / "logs"),
+        _TEST_SYSTEM_PROMPT,
+    )
+    client = _build_client(tmp_path)
+    client.app = app
+    first: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "seed", "cwd": str(tmp_path)}
+    ).json()
+    conversation_id = first["conversation_id"]
+
+    def _hit(index: int) -> None:
+        response = client.post(
+            "/chat",
+            json={
+                "prompt": f"p{index}",
+                "conversation_id": conversation_id,
+                "cwd": str(tmp_path),
+            },
+        )
+        assert response.status_code == 200
+
+    threads = [threading.Thread(target=_hit, args=(index,)) for index in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    saved = store.ConversationStore(tmp_path / "conversations").load(conversation_id)
+    prompts = sorted(
+        message["content"] for message in saved if message["role"] == "user"
+    )
+    assert prompts == sorted(["seed", "p0", "p1", "p2", "p3"])

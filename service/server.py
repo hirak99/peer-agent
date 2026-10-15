@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import pathlib
+import threading
 from collections.abc import Iterator
 
 import dotenv
@@ -85,17 +86,6 @@ def _resolve_host_cap(
     return server_default
 
 
-def _resolve_history(
-    conversations: store.ConversationStore, request: models.ChatRequest
-) -> tuple[str, list[dict[str, Any]]]:
-    if request.conversation_id is None:
-        conversation_id = conversations.new_id()
-        return conversation_id, []
-    if not conversations.exists(request.conversation_id):
-        raise fastapi.HTTPException(status_code=404, detail="Unknown conversation_id.")
-    return request.conversation_id, conversations.load(request.conversation_id)
-
-
 def _resolve_context(request: models.ChatRequest) -> base.ToolContext:
     if request.cwd is None:
         return base.ToolContext(workdir=None)
@@ -175,6 +165,18 @@ def build_app(
 ) -> fastapi.FastAPI:
     """Builds the FastAPI app over the given backend and storage."""
     app = fastapi.FastAPI(title="peer-agent")
+    # Single-process guard: one server owns one port, so per-id threads
+    # locks are enough to prevent lost updates on concurrent turns.
+    _guard = threading.Lock()
+    _locks: dict[str, threading.Lock] = {}
+
+    def _lock_for(conversation_id: str) -> threading.Lock:
+        with _guard:
+            lock = _locks.get(conversation_id)
+            if lock is None:
+                lock = threading.Lock()
+                _locks[conversation_id] = lock
+            return lock
 
     @app.get("/health")
     def _health() -> dict[str, str]:
@@ -183,25 +185,37 @@ def build_app(
     @app.post("/chat")
     def _chat(request: models.ChatRequest) -> models.ChatResponse:
         context = _resolve_context(request)
-        conversation_id, history = _resolve_history(conversations, request)
-        _maybe_emit_system_prompt(conversations, events, conversation_id, system_prompt)
-        events.record(
-            conversation_id,
-            log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
-        )
-        history.append({"role": "user", "content": request.prompt})
-        cap = _resolve_host_cap(request, default_host_max_tool_turns)
-        completion = backend.complete(history, context, cap)
-        conversations.save(conversation_id, history)
-        _log_completion(backend, events, conversation_id, completion)
-        return models.ChatResponse(
-            text=completion.text,
-            conversation_id=conversation_id,
-            status=completion.status,  # type: ignore[arg-type]
-            hint=completion.hint,
-            tool_turns=completion.tool_turns,
-            usage=completion.usage,
-        )
+        conversation_id = request.conversation_id or conversations.new_id()
+        with _lock_for(conversation_id):
+            if request.conversation_id is not None and not conversations.exists(
+                conversation_id
+            ):
+                raise fastapi.HTTPException(
+                    status_code=404, detail="Unknown conversation_id."
+                )
+            history = (
+                conversations.load(conversation_id) if request.conversation_id else []
+            )
+            _maybe_emit_system_prompt(
+                conversations, events, conversation_id, system_prompt
+            )
+            events.record(
+                conversation_id,
+                log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
+            )
+            history.append({"role": "user", "content": request.prompt})
+            cap = _resolve_host_cap(request, default_host_max_tool_turns)
+            completion = backend.complete(history, context, cap)
+            conversations.save(conversation_id, history)
+            _log_completion(backend, events, conversation_id, completion)
+            return models.ChatResponse(
+                text=completion.text,
+                conversation_id=conversation_id,
+                status=completion.status,  # type: ignore[arg-type]
+                hint=completion.hint,
+                tool_turns=completion.tool_turns,
+                usage=completion.usage,
+            )
 
     @app.post("/chat/stream")
     def _chat_stream(
@@ -210,70 +224,84 @@ def build_app(
         def _generate() -> Iterator[str]:
             try:
                 context = _resolve_context(request)
-                conversation_id, history = _resolve_history(conversations, request)
-                _maybe_emit_system_prompt(
-                    conversations, events, conversation_id, system_prompt
-                )
-                events.record(
-                    conversation_id,
-                    log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
-                )
-                history.append({"role": "user", "content": request.prompt})
-                cap = _resolve_host_cap(request, default_host_max_tool_turns)
-                tool_events: list[base.ToolEvent] = []
-                meta: dict[str, Any] = {}
-                pieces: list[str] = []
-                for token in backend.stream_text(
-                    history, tool_events, context, cap, meta
-                ):
-                    pieces.append(token)
-                    yield (
-                        "data: " + json.dumps({"type": "token", "text": token}) + "\n\n"
+                conversation_id = request.conversation_id or conversations.new_id()
+                with _lock_for(conversation_id):
+                    if request.conversation_id is not None and not conversations.exists(
+                        conversation_id
+                    ):
+                        raise fastapi.HTTPException(
+                            status_code=404, detail="Unknown conversation_id."
+                        )
+                    history = (
+                        conversations.load(conversation_id)
+                        if request.conversation_id
+                        else []
                     )
-                usage = meta.get("usage")
-                status = str(meta.get("status", "done"))
-                hint = meta.get("hint")
-                tool_turns = int(meta.get("tool_turns", len(tool_events)))
-                conversations.save(conversation_id, history)
-                _log_completion(
-                    backend,
-                    events,
-                    conversation_id,
-                    base.Completion(
-                        text="".join(pieces),
-                        usage=usage,
-                        tool_events=tool_events,
-                        status=status,
-                        hint=hint,
-                        tool_turns=tool_turns,
-                    ),
-                )
-                for tool_event in tool_events:
+                    _maybe_emit_system_prompt(
+                        conversations, events, conversation_id, system_prompt
+                    )
+                    events.record(
+                        conversation_id,
+                        log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
+                    )
+                    history.append({"role": "user", "content": request.prompt})
+                    cap = _resolve_host_cap(request, default_host_max_tool_turns)
+                    tool_events: list[base.ToolEvent] = []
+                    meta: dict[str, Any] = {}
+                    pieces: list[str] = []
+                    for token in backend.stream_text(
+                        history, tool_events, context, cap, meta
+                    ):
+                        pieces.append(token)
+                        yield (
+                            "data: "
+                            + json.dumps({"type": "token", "text": token})
+                            + "\n\n"
+                        )
+                    usage = meta.get("usage")
+                    status = str(meta.get("status", "done"))
+                    hint = meta.get("hint")
+                    tool_turns = int(meta.get("tool_turns", len(tool_events)))
+                    conversations.save(conversation_id, history)
+                    _log_completion(
+                        backend,
+                        events,
+                        conversation_id,
+                        base.Completion(
+                            text="".join(pieces),
+                            usage=usage,
+                            tool_events=tool_events,
+                            status=status,
+                            hint=hint,
+                            tool_turns=tool_turns,
+                        ),
+                    )
+                    for tool_event in tool_events:
+                        yield (
+                            "data: "
+                            + json.dumps(
+                                {
+                                    "type": "tool_call",
+                                    "name": tool_event.name,
+                                    "input": tool_event.tool_input,
+                                    "failure_reason": tool_event.failure_reason,
+                                }
+                            )
+                            + "\n\n"
+                        )
                     yield (
                         "data: "
                         + json.dumps(
                             {
-                                "type": "tool_call",
-                                "name": tool_event.name,
-                                "input": tool_event.tool_input,
-                                "failure_reason": tool_event.failure_reason,
+                                "type": "done",
+                                "conversation_id": conversation_id,
+                                "status": status,
+                                "hint": hint,
+                                "tool_turns": tool_turns,
                             }
                         )
                         + "\n\n"
                     )
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "type": "done",
-                            "conversation_id": conversation_id,
-                            "status": status,
-                            "hint": hint,
-                            "tool_turns": tool_turns,
-                        }
-                    )
-                    + "\n\n"
-                )
             except fastapi.HTTPException as exc:
                 yield (
                     "data: "
