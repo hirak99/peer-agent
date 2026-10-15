@@ -8,6 +8,8 @@ from service.tools import registry
 
 from typing import Any
 
+# pyright: reportPrivateUsage=false
+
 
 def _backend(handler: Any) -> tuple[anthropic_backend.AnthropicBackend, list[Any]]:
     """Builds a backend with one fake tool, bypassing API construction."""

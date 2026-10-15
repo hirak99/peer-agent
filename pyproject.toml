@@ -1,5 +1,6 @@
 [project]
 name = "agent-to-agent"
+version = "0.1.0"
 requires-python = ">=3.13"
 # No dependencies here: requirements.txt is the single source of truth.
 
