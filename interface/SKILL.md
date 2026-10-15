@@ -64,6 +64,7 @@ The CLI defaults `--cwd` to its own working directory; `--null-cwd` sends
 - `cwd` is required on every call: an absolute, existing directory, or `null`.
   Relative/missing paths return 400, a missing field returns 422.
 - Unknown `conversation_id` returns 404; drop the id and retry to start fresh.
-- The peer can run `bash` server-side; ask it to run commands when useful.
+- The peer can run `bash` and `read` (line-numbered file slices) server-side;
+  ask it to run commands or read files when useful.
 - Every turn is logged to `logs/<conversation_id>.jsonl`.
 - Prefer one thread per task so the peer keeps context.
