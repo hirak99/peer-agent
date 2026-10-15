@@ -43,8 +43,8 @@ suspend only after `n = _CACHE_IDLE_DISABLE_AFTER` (in
 `service/backends/anthropic_backend.py`) consecutive gaps over 5 minutes.
 
 Breakeven occurs at probability of cache hit h, then -
-($/Write - $/Cache Read) h = ($/WriteCached - $/Write) (1 - h)
-=> h = ($/WriteCached - $/Write) / ($/WriteCached - $/Cache Read)
+($/Write - $/CacheRead) h = ($/CachedWrite - $/Write) (1 - h)
+=> h = ($/CachedWrite - $/Write) / ($/CachedWrite - $/CacheRead)
 
 Ideally we need to tune so that `n` number of misses implies
 prob(next hit) < h.
