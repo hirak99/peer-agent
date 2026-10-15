@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import time
-from collections import deque
 from collections.abc import Iterator
 
 import anthropic
@@ -48,11 +47,11 @@ _SEEN_HISTORY_CAP = 512
 # tail on every request; per-request copies keep stored history clean.
 _CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
 # Breakpoints both read the cache and (re)write it at +25%; a write nobody
-# re-reads before the TTL is pure surcharge. Attach them only when recent
-# cadence shows the cache will be read: the last few requests must fall
-# inside the freshness window (which tracks the 5-min ephemeral TTL).
-_CACHE_RECENCY_COUNT = 3
+# re-reads before the TTL is pure surcharge. Breakeven needs only ~0.2 hit
+# probability, so attach by default and suspend only on sustained idleness:
+# consecutive over-window gaps that show nobody is reading.
 _CACHE_FRESHNESS_WINDOW_S = 5 * 60
+_CACHE_IDLE_DISABLE_AFTER = 2
 
 
 class AnthropicBackend(base.Backend):
@@ -84,8 +83,10 @@ class AnthropicBackend(base.Backend):
         self._compact_keep = compact_keep_messages
         self._max_input_tokens: int | None = None
         self._client = anthropic.Anthropic(api_key=api_key)
-        # Start times (monotonic) of recent API requests, for cache gating.
-        self._request_times: deque[float] = deque(maxlen=_CACHE_RECENCY_COUNT)
+        # Last API request time (monotonic) plus consecutive over-window
+        # gaps, for cache gating.
+        self._last_request_time: float | None = None
+        self._cache_idle_streak = 0
         self._validate_model()
 
     def _validate_model(self) -> None:
@@ -242,21 +243,20 @@ class AnthropicBackend(base.Backend):
     def _should_cache(self) -> bool:
         """Reports whether this request should carry cache breakpoints.
 
-        True only when the last few requests fall inside the freshness
-        window, i.e. the cache is probably alive and will be re-read.
-        Records every request so slow cadences naturally disable caching.
+        True unless consecutive over-window gaps show sustained idleness;
+        a lone slow gap still attaches, since the next call usually reads.
+        Records every request so slow cadences naturally suspend caching.
         """
-        times = getattr(self, "_request_times", None)
-        if times is None:
-            times = deque(maxlen=_CACHE_RECENCY_COUNT)
-            self._request_times = times
         now = time.monotonic()
-        fresh = (
-            len(times) >= _CACHE_RECENCY_COUNT
-            and now - times[0] <= _CACHE_FRESHNESS_WINDOW_S
-        )
-        times.append(now)
-        return fresh
+        last = getattr(self, "_last_request_time", None)
+        streak = getattr(self, "_cache_idle_streak", 0)
+        if last is None or now - last <= _CACHE_FRESHNESS_WINDOW_S:
+            streak = 0
+        else:
+            streak += 1
+        self._last_request_time = now
+        self._cache_idle_streak = streak
+        return streak < _CACHE_IDLE_DISABLE_AFTER
 
     def _system_param(self, text: str | None = None, use_cache: bool = True) -> Any:
         """Returns a system prompt, cache-marked unless gated off."""

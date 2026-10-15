@@ -4,7 +4,6 @@ import json
 import pathlib
 import time
 import types
-from collections import deque
 
 from service.backends import anthropic_backend
 from service.backends import base
@@ -164,7 +163,6 @@ def test_message_params_marks_tail_without_mutating_history() -> None:
 def test_complete_leaves_stored_history_cache_free() -> None:
     """The full request is cache-marked but persistence sees plain history."""
     backend = _wired_backend()
-    _seed_times(backend, [30, 20, 10])
     calls: list[dict[str, Any]] = []
 
     def _create(**kwargs: Any) -> Any:
@@ -186,41 +184,38 @@ def test_complete_leaves_stored_history_cache_free() -> None:
     assert sent["messages"][-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
-def _seed_times(
-    backend: anthropic_backend.AnthropicBackend, offsets: list[float]
+def _seed_idle(
+    backend: anthropic_backend.AnthropicBackend, streak: int, last_gap: float
 ) -> None:
-    """Seeds recency history at offsets (seconds ago)."""
-    now = time.monotonic()
-    backend._request_times = deque(
-        [now - offset for offset in offsets],
-        maxlen=anthropic_backend._CACHE_RECENCY_COUNT,
-    )
+    """Seeds an idleness streak with the last request last_gap seconds ago."""
+    backend._cache_idle_streak = streak
+    backend._last_request_time = time.monotonic() - last_gap
 
 
-def test_cache_gating_starts_cold() -> None:
-    """Fresh backends skip breakpoints until brisk cadence is proven."""
+def test_cache_gating_attaches_by_default() -> None:
+    """Cold backends and brisk sessions always carry breakpoints."""
     backend = _wired_backend()
-    assert backend._should_cache() is False
-    assert backend._should_cache() is False
-    assert backend._should_cache() is False
+    assert backend._should_cache() is True
     assert backend._should_cache() is True
 
 
-def test_cache_gating_rejects_stale_cadence() -> None:
-    """One old request in the window disables breakpoints for this call."""
+def test_cache_gating_survives_a_lone_idle_gap() -> None:
+    """One slow gap still attaches; the next call usually reads the write."""
     backend = _wired_backend()
-    _seed_times(backend, [400, 10, 0])
-    assert backend._should_cache() is False
-
-
-def test_cache_gating_reenables_after_brisk_resume() -> None:
-    """Post-idle calls pay base price until three brisk requests re-arm."""
-    backend = _wired_backend()
-    _seed_times(backend, [1000, 900, 800])
-    assert backend._should_cache() is False
-    assert backend._should_cache() is False
-    assert backend._should_cache() is False
+    _seed_idle(backend, 0, 400)
     assert backend._should_cache() is True
+    assert backend._cache_idle_streak == 1
+
+
+def test_cache_gating_suspends_on_sustained_idleness() -> None:
+    """Two consecutive over-window gaps suspend; brisk cadence re-arms."""
+    backend = _wired_backend()
+    _seed_idle(backend, 2, 400)
+    assert backend._should_cache() is False
+    assert backend._cache_idle_streak == 3
+    backend._last_request_time = time.monotonic()
+    assert backend._should_cache() is True
+    assert backend._cache_idle_streak == 0
 
 
 def test_helpers_omit_breakpoints_when_gated_off() -> None:
@@ -233,8 +228,8 @@ def test_helpers_omit_breakpoints_when_gated_off() -> None:
     assert params == [{"role": "user", "content": "hi"}]
 
 
-def test_complete_skips_breakpoints_on_cold_start() -> None:
-    """The first calls of a session carry no cache markers."""
+def test_complete_skips_breakpoints_when_sustained_idle() -> None:
+    """Only sustained idleness strips markers; cold starts still attach."""
     backend = _wired_backend()
     calls: list[dict[str, Any]] = []
 
@@ -250,4 +245,7 @@ def test_complete_skips_breakpoints_on_cold_start() -> None:
     )
     history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
     backend.complete(history, base.ToolContext(workdir=None), None)
-    assert "cache_control" not in json.dumps(calls[0])
+    assert "cache_control" in json.dumps(calls[0])
+    _seed_idle(backend, 1, 400)
+    backend.complete(history, base.ToolContext(workdir=None), None)
+    assert "cache_control" not in json.dumps(calls[1])
