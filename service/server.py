@@ -4,15 +4,14 @@ import argparse
 import json
 import logging
 import pathlib
-import threading
 from collections.abc import Iterator
 
 import dotenv
 import fastapi
 import uvicorn
 
+from service import chat_turn
 from service import event_log
-from service import log_events
 from service import models
 from service import store
 from service.backends import anthropic_backend
@@ -77,84 +76,6 @@ def build_backend(
     raise ValueError(f"Unknown backend: {kind}")
 
 
-def _resolve_host_cap(
-    request: models.ChatRequest, server_default: int | None
-) -> int | None:
-    """Resolves the host-controlled tool budget: request wins, else server."""
-    if request.host_max_tool_turns is not None:
-        return request.host_max_tool_turns
-    return server_default
-
-
-def _resolve_context(request: models.ChatRequest) -> base.ToolContext:
-    if request.cwd is None:
-        return base.ToolContext(workdir=None)
-    workdir = pathlib.Path(request.cwd)
-    if not workdir.is_absolute() or not workdir.is_dir():
-        raise fastapi.HTTPException(
-            status_code=400, detail="cwd must be an existing absolute directory."
-        )
-    return base.ToolContext(workdir=workdir)
-
-
-def _maybe_emit_system_prompt(
-    conversations: store.ConversationStore,
-    events: event_log.EventLog,
-    conversation_id: str,
-    system_prompt: str,
-) -> None:
-    previous = conversations.load_system_prompt(conversation_id)
-    if previous is None:
-        events.record(
-            conversation_id,
-            log_events.SystemPromptEvent(
-                system_prompt=system_prompt, reason="conversation_start"
-            ),
-        )
-        conversations.save_system_prompt(conversation_id, system_prompt)
-    elif previous != system_prompt:
-        events.record(
-            conversation_id,
-            log_events.SystemPromptEvent(system_prompt=system_prompt, reason="changed"),
-        )
-        conversations.save_system_prompt(conversation_id, system_prompt)
-
-
-def _log_completion(
-    backend: base.Backend,
-    events: event_log.EventLog,
-    conversation_id: str,
-    completion: base.Completion,
-) -> None:
-    for tool_event in completion.tool_events:
-        events.record(
-            conversation_id,
-            log_events.ToolCallEvent(
-                name=tool_event.name, tool_input=tool_event.tool_input
-            ),
-        )
-        events.record(
-            conversation_id,
-            log_events.ToolResultEvent(
-                name=tool_event.name,
-                output=tool_event.output,
-                failure_reason=tool_event.failure_reason,
-            ),
-        )
-    identity = backend.describe()
-    events.record(
-        conversation_id,
-        log_events.ResponseEvent(
-            text=completion.text,
-            usage=completion.usage,
-            model=identity["model"],
-            backend=identity["backend"],
-            status=completion.status,  # type: ignore[arg-type]
-            tool_turns=completion.tool_turns,
-        ),
-    )
-
-
 def build_app(
     backend: base.Backend,
     conversations: store.ConversationStore,
@@ -165,18 +86,9 @@ def build_app(
 ) -> fastapi.FastAPI:
     """Builds the FastAPI app over the given backend and storage."""
     app = fastapi.FastAPI(title="peer-agent")
-    # Single-process guard: one server owns one port, so per-id threads
+    # Single-process guard: one server owns one port, so per-id thread
     # locks are enough to prevent lost updates on concurrent turns.
-    _guard = threading.Lock()
-    _locks: dict[str, threading.Lock] = {}
-
-    def _lock_for(conversation_id: str) -> threading.Lock:
-        with _guard:
-            lock = _locks.get(conversation_id)
-            if lock is None:
-                lock = threading.Lock()
-                _locks[conversation_id] = lock
-            return lock
+    locks = chat_turn.ConversationLocks()
 
     @app.get("/health")
     def _health() -> dict[str, str]:
@@ -184,38 +96,17 @@ def build_app(
 
     @app.post("/chat")
     def _chat(request: models.ChatRequest) -> models.ChatResponse:
-        context = _resolve_context(request)
-        conversation_id = request.conversation_id or conversations.new_id()
-        with _lock_for(conversation_id):
-            if request.conversation_id is not None and not conversations.exists(
-                conversation_id
-            ):
-                raise fastapi.HTTPException(
-                    status_code=404, detail="Unknown conversation_id."
-                )
-            history = (
-                conversations.load(conversation_id) if request.conversation_id else []
-            )
-            _maybe_emit_system_prompt(
-                conversations, events, conversation_id, system_prompt
-            )
-            events.record(
+        conversation_id = chat_turn.resolve_id(conversations, request)
+        with locks.for_id(conversation_id):
+            state = chat_turn.begin_turn(
+                conversations,
+                events,
+                system_prompt,
+                default_host_max_tool_turns,
+                request,
                 conversation_id,
-                log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
             )
-            history.append({"role": "user", "content": request.prompt})
-            cap = _resolve_host_cap(request, default_host_max_tool_turns)
-            completion = backend.complete(history, context, cap)
-            conversations.save(conversation_id, history)
-            _log_completion(backend, events, conversation_id, completion)
-            return models.ChatResponse(
-                text=completion.text,
-                conversation_id=conversation_id,
-                status=completion.status,  # type: ignore[arg-type]
-                hint=completion.hint,
-                tool_turns=completion.tool_turns,
-                usage=completion.usage,
-            )
+            return chat_turn.finish_turn(conversations, events, backend, state)
 
     @app.post("/chat/stream")
     def _chat_stream(
@@ -223,34 +114,21 @@ def build_app(
     ) -> fastapi.responses.StreamingResponse:
         def _generate() -> Iterator[str]:
             try:
-                context = _resolve_context(request)
-                conversation_id = request.conversation_id or conversations.new_id()
-                with _lock_for(conversation_id):
-                    if request.conversation_id is not None and not conversations.exists(
-                        conversation_id
-                    ):
-                        raise fastapi.HTTPException(
-                            status_code=404, detail="Unknown conversation_id."
-                        )
-                    history = (
-                        conversations.load(conversation_id)
-                        if request.conversation_id
-                        else []
-                    )
-                    _maybe_emit_system_prompt(
-                        conversations, events, conversation_id, system_prompt
-                    )
-                    events.record(
+                conversation_id = chat_turn.resolve_id(conversations, request)
+                with locks.for_id(conversation_id):
+                    state = chat_turn.begin_turn(
+                        conversations,
+                        events,
+                        system_prompt,
+                        default_host_max_tool_turns,
+                        request,
                         conversation_id,
-                        log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
                     )
-                    history.append({"role": "user", "content": request.prompt})
-                    cap = _resolve_host_cap(request, default_host_max_tool_turns)
                     tool_events: list[base.ToolEvent] = []
                     meta: dict[str, Any] = {}
                     pieces: list[str] = []
                     for token in backend.stream_text(
-                        history, tool_events, context, cap, meta
+                        state.history, tool_events, state.context, state.cap, meta
                     ):
                         pieces.append(token)
                         yield (
@@ -258,23 +136,8 @@ def build_app(
                             + json.dumps({"type": "token", "text": token})
                             + "\n\n"
                         )
-                    usage = meta.get("usage")
-                    status = str(meta.get("status", "done"))
-                    hint = meta.get("hint")
-                    tool_turns = int(meta.get("tool_turns", len(tool_events)))
-                    conversations.save(conversation_id, history)
-                    _log_completion(
-                        backend,
-                        events,
-                        conversation_id,
-                        base.Completion(
-                            text="".join(pieces),
-                            usage=usage,
-                            tool_events=tool_events,
-                            status=status,
-                            hint=hint,
-                            tool_turns=tool_turns,
-                        ),
+                    done = chat_turn.finish_stream_turn(
+                        conversations, events, backend, state, pieces, tool_events, meta
                     )
                     for tool_event in tool_events:
                         yield (
@@ -294,10 +157,10 @@ def build_app(
                         + json.dumps(
                             {
                                 "type": "done",
-                                "conversation_id": conversation_id,
-                                "status": status,
-                                "hint": hint,
-                                "tool_turns": tool_turns,
+                                "conversation_id": done["conversation_id"],
+                                "status": done["status"],
+                                "hint": done["hint"],
+                                "tool_turns": done["tool_turns"],
                             }
                         )
                         + "\n\n"
