@@ -46,6 +46,34 @@ def test_needs_compaction_margin_math() -> None:
     assert compaction.needs_compaction(10**9, 0, 0, None) is False
 
 
+def test_effective_margin_floors_at_five_percent_of_window() -> None:
+    """A fixed margin stays thin on large windows; the floor scales."""
+    assert (
+        compaction.resolve_effective_margin(
+            compaction.CompactionConfig(margin_tokens=20000), 1_000_000
+        )
+        == 50000
+    )
+    assert (
+        compaction.resolve_effective_margin(
+            compaction.CompactionConfig(margin_tokens=200000), 1_000_000
+        )
+        == 200000
+    )
+    assert (
+        compaction.resolve_effective_margin(
+            compaction.CompactionConfig(margin_tokens=0), 10
+        )
+        == 0
+    )
+    assert (
+        compaction.resolve_effective_margin(
+            compaction.CompactionConfig(margin_tokens=20000), None
+        )
+        == 20000
+    )
+
+
 def test_proactive_compaction_rewrites_history(tmp_path: pathlib.Path) -> None:
     """A tiny window override forces summarization on the next turn."""
     conversations = store.ConversationStore(tmp_path / "conversations")

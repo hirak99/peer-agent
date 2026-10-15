@@ -187,7 +187,7 @@ def _maybe_compact_proactive(
         if not compaction.needs_compaction(
             compaction.estimate_tokens(history),
             reserve,
-            compaction.resolve_margin(active),
+            compaction.resolve_effective_margin(active, window),
             window,
         ):
             return None

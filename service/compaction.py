@@ -7,6 +7,9 @@ from typing import Any
 
 # Fallback headroom when no margin is configured explicitly.
 DEFAULT_MARGIN_TOKENS = 20000
+# Floor on effective headroom as a fraction of the window, so a fixed
+# margin isn't vanishingly thin on large-context models.
+MIN_MARGIN_FRACTION = 0.05
 # Recent tail preserved verbatim across a compaction.
 DEFAULT_KEEP_MESSAGES = 20
 # Per-message cap applied before sending history to the summarizer.
@@ -60,6 +63,17 @@ def resolve_margin(config: CompactionConfig | None) -> int:
     if config is not None and config.margin_tokens is not None:
         return config.margin_tokens
     return DEFAULT_MARGIN_TOKENS
+
+
+def resolve_effective_margin(
+    config: CompactionConfig | None, context_window: int | None
+) -> int:
+    """Returns max(configured margin, 5% of window)."""
+    margin = resolve_margin(config)
+    if context_window is None:
+        return margin
+    floor = int(context_window * MIN_MARGIN_FRACTION)
+    return max(margin, floor)
 
 
 def needs_compaction(

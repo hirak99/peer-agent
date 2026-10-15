@@ -52,10 +52,12 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 
 ## Compaction
 
-Long threads auto-compact: when `est_history + max_tokens + --compact-margin-tokens`
+Long threads auto-compact: when `est_history + max_tokens + effective_margin`
 exceeds the model's input budget (read from the Models API at startup, 1M for
 current Claude 5.5 models), old turns are summarized and replaced, keeping the
-last `--compact-keep-messages` (default 20). Full history stays in `logs/`;
+last `--compact-keep-messages` (default 20). The effective margin is
+`max(--compact-margin-tokens, 5% of window)`, so the fixed default (20000)
+scales up on large-context models. Full history stays in `logs/`;
 compactions are logged as `compaction` events. Per-turn override:
 `{"compact": true/false}`. Manual, no model turn: `POST /compact
 {"conversation_id": "..."}` (CLI: `python client/chat.py "/compact"
