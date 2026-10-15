@@ -184,40 +184,21 @@ def test_complete_leaves_stored_history_cache_free() -> None:
     assert sent["messages"][-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
-def _seed_idle(
-    backend: anthropic_backend.AnthropicBackend, streak: int, last_gap: float
-) -> None:
-    """Seeds an idleness streak with the last request last_gap seconds ago."""
-    backend._cache_idle_streak = streak
-    backend._last_request_time = time.monotonic() - last_gap
+def _suspend_gate(backend: anthropic_backend.AnthropicBackend) -> None:
+    """Drives the backend's gate into the suspended state deterministically."""
+    backend._should_cache()
+    gate = backend._cache_gate
+    start = time.monotonic() - 2000.0
+    for offset in (0.0, 400.0, 800.0, 1200.0):
+        gate.should_cache(now=start + offset)
 
 
-def test_cache_gating_attaches_by_default() -> None:
-    """Cold backends and brisk sessions always carry breakpoints."""
+def test_backend_delegates_caching_to_gate() -> None:
+    """_should_cache passes through the shared gate decision."""
     backend = _wired_backend()
     assert backend._should_cache() is True
-    assert backend._should_cache() is True
-
-
-def test_cache_gating_survives_a_lone_idle_gap() -> None:
-    """One slow gap still attaches; the next call usually reads the write."""
-    backend = _wired_backend()
-    _seed_idle(backend, 0, 400)
-    assert backend._should_cache() is True
-    assert backend._cache_idle_streak == 1
-
-
-def test_cache_gating_suspends_on_sustained_idleness() -> None:
-    """Three consecutive over-window gaps suspend; brisk cadence re-arms."""
-    backend = _wired_backend()
-    _seed_idle(backend, 1, 400)
-    assert backend._should_cache() is True
-    _seed_idle(backend, 2, 400)
+    _suspend_gate(backend)
     assert backend._should_cache() is False
-    assert backend._cache_idle_streak == 3
-    backend._last_request_time = time.monotonic()
-    assert backend._should_cache() is True
-    assert backend._cache_idle_streak == 0
 
 
 def test_helpers_omit_breakpoints_when_gated_off() -> None:
@@ -248,6 +229,6 @@ def test_complete_skips_breakpoints_when_sustained_idle() -> None:
     history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
     backend.complete(history, base.ToolContext(workdir=None), None)
     assert "cache_control" in json.dumps(calls[0])
-    _seed_idle(backend, 2, 400)
+    _suspend_gate(backend)
     backend.complete(history, base.ToolContext(workdir=None), None)
     assert "cache_control" not in json.dumps(calls[1])

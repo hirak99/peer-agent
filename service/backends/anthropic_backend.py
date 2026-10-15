@@ -3,11 +3,11 @@
 import hashlib
 import json
 import os
-import time
 from collections.abc import Iterator
 
 import anthropic
 
+from service import cache_policy
 from service import compaction
 from service import log_events
 from service.backends import base
@@ -46,13 +46,13 @@ _SEEN_HISTORY_CAP = 512
 # Attached to the system prompt, the last tool definition, and the history
 # tail on every request; per-request copies keep stored history clean.
 _CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
-# Breakpoints both read the cache and (re)write it at +25%; a write nobody
-# re-reads before the TTL is pure surcharge. Breakeven needs only ~0.2 hit
-# probability, so attach by default and suspend only on sustained idleness.
-# Tune this so that after N consecutive misses P(next request hits) < 0.2083
-# (breakeven); deeper slow bursts than N stay attached, fully dead sessions
-# waste one extra write per level.
+# Freshness window tracking the ephemeral-cache TTL: gaps inside it
+# guarantee a live cache.
 _CACHE_FRESHNESS_WINDOW_S = 5 * 60
+# Consecutive over-window gaps that suspend breakpoints. Tune so that after
+# N consecutive misses P(next request hits) < breakeven (0.2083 here);
+# deeper slow bursts than N stay attached, fully dead sessions waste one
+# extra write per level.
 _CACHE_IDLE_DISABLE_AFTER = 3
 
 
@@ -85,10 +85,11 @@ class AnthropicBackend(base.Backend):
         self._compact_keep = compact_keep_messages
         self._max_input_tokens: int | None = None
         self._client = anthropic.Anthropic(api_key=api_key)
-        # Last API request time (monotonic) plus consecutive over-window
-        # gaps, for cache gating.
-        self._last_request_time: float | None = None
-        self._cache_idle_streak = 0
+        # Recency gate for cache breakpoints, shared across conversations.
+        self._cache_gate = cache_policy.CacheGate(
+            freshness_window_s=_CACHE_FRESHNESS_WINDOW_S,
+            idle_disable_after=_CACHE_IDLE_DISABLE_AFTER,
+        )
         self._validate_model()
 
     def _validate_model(self) -> None:
@@ -243,22 +244,15 @@ class AnthropicBackend(base.Backend):
         )
 
     def _should_cache(self) -> bool:
-        """Reports whether this request should carry cache breakpoints.
-
-        True unless consecutive over-window gaps show sustained idleness;
-        a lone slow gap still attaches, since the next call usually reads.
-        Records every request so slow cadences naturally suspend caching.
-        """
-        now = time.monotonic()
-        last = getattr(self, "_last_request_time", None)
-        streak = getattr(self, "_cache_idle_streak", 0)
-        if last is None or now - last <= _CACHE_FRESHNESS_WINDOW_S:
-            streak = 0
-        else:
-            streak += 1
-        self._last_request_time = now
-        self._cache_idle_streak = streak
-        return streak < _CACHE_IDLE_DISABLE_AFTER
+        """Delegates to the shared recency gate (one decision per request)."""
+        gate = getattr(self, "_cache_gate", None)
+        if gate is None:
+            gate = cache_policy.CacheGate(
+                freshness_window_s=_CACHE_FRESHNESS_WINDOW_S,
+                idle_disable_after=_CACHE_IDLE_DISABLE_AFTER,
+            )
+            self._cache_gate = gate
+        return gate.should_cache()
 
     def _system_param(self, text: str | None = None, use_cache: bool = True) -> Any:
         """Returns a system prompt, cache-marked unless gated off."""

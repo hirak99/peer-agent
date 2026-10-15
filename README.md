@@ -39,8 +39,8 @@ mid-thread model switch stays attributable.
 Every request marks ephemeral cache breakpoints on the system prompt, the
 last tool definition, and the history tail, so repeated history is served
 from cache (5-min TTL) instead of rebilled. Breakpoints attach by default and
-suspend only after `n = _CACHE_IDLE_DISABLE_AFTER` consecutive gaps over
-5 minutes.
+suspend only after `n = _CACHE_IDLE_DISABLE_AFTER` (in
+`service/backends/anthropic_backend.py`) consecutive gaps over 5 minutes.
 
 Breakeven occurs at probability of cache hit h, then -
 ($/Write - $/Cache Read) h = ($/WriteCached - $/Write) (1 - h)
