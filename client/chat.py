@@ -14,8 +14,8 @@ from service import server
 
 from typing import Any
 
-# Long timeout: replies may include several tool turns.
-_REQUEST_TIMEOUT_S = 300.0
+# Long timeout: replies may include many tool turns.
+_REQUEST_TIMEOUT_S = 1800.0
 
 
 def _parse_args() -> argparse.Namespace:
@@ -26,11 +26,35 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--stream", action="store_true")
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--null-cwd", action="store_true")
+    parser.add_argument(
+        "--max-tool-turns",
+        type=int,
+        default=None,
+        help="Tool-turn budget for this reply (default: server default 30).",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Auto-send 'continue' while the server asks for continuation.",
+    )
     return parser.parse_args()
 
 
-def _run_stream(base_url: str, payload: dict[str, Any]) -> None:
+def _build_payload(args: argparse.Namespace, prompt: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "cwd": None if args.null_cwd else args.cwd,
+    }
+    if args.conversation_id is not None:
+        payload["conversation_id"] = args.conversation_id
+    if args.max_tool_turns is not None:
+        payload["max_tool_turns"] = args.max_tool_turns
+    return payload
+
+
+def _run_stream(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Prints streamed tokens live, then the conversation id."""
+    body: dict[str, Any] = {}
     with httpx.stream(
         "POST", f"{base_url}/chat/stream", json=payload, timeout=_REQUEST_TIMEOUT_S
     ) as response:
@@ -45,30 +69,57 @@ def _run_stream(base_url: str, payload: dict[str, Any]) -> None:
             elif kind == "done":
                 print()
                 print(
-                    f"conversation_id={event.get('conversation_id')}", file=sys.stderr
+                    f"conversation_id={event.get('conversation_id')} "
+                    f"status={event.get('status', 'done')}",
+                    file=sys.stderr,
                 )
+                if event.get("hint"):
+                    print(f"hint={event['hint']}", file=sys.stderr)
+                body = {
+                    "text": "",
+                    "conversation_id": event.get("conversation_id"),
+                    "status": event.get("status", "done"),
+                    "hint": event.get("hint"),
+                }
             else:
                 print(f"[{kind}] {json.dumps(event)}", file=sys.stderr)
+    return body
 
 
 def main() -> None:
     """Sends one prompt, prints the reply, reports the conversation id."""
     args = _parse_args()
-    payload: dict[str, Any] = {
-        "prompt": args.prompt,
-        "cwd": None if args.null_cwd else args.cwd,
-    }
-    if args.conversation_id is not None:
-        payload["conversation_id"] = args.conversation_id
     base_url = f"http://127.0.0.1:{args.port}"
-    if args.stream:
-        _run_stream(base_url, payload)
-        return
-    response = httpx.post(f"{base_url}/chat", json=payload, timeout=_REQUEST_TIMEOUT_S)
-    response.raise_for_status()
-    body: dict[str, Any] = response.json()
-    print(str(body["text"]))
-    print(f"conversation_id={body['conversation_id']}", file=sys.stderr)
+    prompt = args.prompt
+    payload = _build_payload(args, prompt)
+    first = True
+    while True:
+        if args.stream:
+            body = _run_stream(base_url, payload)
+        else:
+            response = httpx.post(
+                f"{base_url}/chat", json=payload, timeout=_REQUEST_TIMEOUT_S
+            )
+            response.raise_for_status()
+            body = response.json()
+            print(str(body["text"]))
+            print(
+                f"conversation_id={body['conversation_id']} "
+                f"status={body.get('status', 'done')}",
+                file=sys.stderr,
+            )
+            if body.get("hint"):
+                print(f"hint={body['hint']}", file=sys.stderr)
+        args.conversation_id = body["conversation_id"]
+        if not args.loop or body.get("status", "done") == "done":
+            break
+        if first:
+            print(
+                "continuation requested; sending 'continue' (--loop)", file=sys.stderr
+            )
+            first = False
+        prompt = "continue"
+        payload = _build_payload(args, prompt)
 
 
 if __name__ == "__main__":

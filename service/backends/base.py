@@ -40,6 +40,12 @@ class Completion:
     usage: log_events.TokenUsage | None
     # Tool invocations in order, for logging.
     tool_events: list[ToolEvent]
+    # Yield gate outcome: done, or paused for host to send "continue".
+    status: str = "done"
+    # Human-readable resume instruction when status != done.
+    hint: str | None = None
+    # Tool turns executed to produce this reply.
+    tool_turns: int = 0
 
 
 class Backend(abc.ABC):
@@ -55,7 +61,10 @@ class Backend(abc.ABC):
 
     @abc.abstractmethod
     def complete(
-        self, messages: list[dict[str, Any]], context: ToolContext
+        self,
+        messages: list[dict[str, Any]],
+        context: ToolContext,
+        max_tool_turns: int | None = 30,
     ) -> Completion:
         """Runs the model (including tool turns) to a final reply."""
 
@@ -64,9 +73,16 @@ class Backend(abc.ABC):
         messages: list[dict[str, Any]],
         tool_events: list[ToolEvent],
         context: ToolContext,
+        max_tool_turns: int | None = 30,
+        meta: dict[str, Any] | None = None,
     ) -> Iterator[str]:
         """Yields reply text pieces; appends observed tool events."""
-        completion = self.complete(messages, context)
+        completion = self.complete(messages, context, max_tool_turns)
         tool_events.extend(completion.tool_events)
+        if meta is not None:
+            meta["usage"] = completion.usage
+            meta["status"] = completion.status
+            meta["hint"] = completion.hint
+            meta["tool_turns"] = completion.tool_turns
         for index in range(0, len(completion.text), 400):
             yield completion.text[index : index + 400]

@@ -39,22 +39,47 @@ _CONVERSATIONS_DIR = _PROJECT_ROOT / "conversations"
 _LOGS_DIR = _PROJECT_ROOT / "logs"
 
 
-def build_default_registry() -> registry.ToolRegistry:
+def build_default_registry(
+    timeout_s: int = bash_tool.DEFAULT_BASH_TIMEOUT_S,
+    max_bytes: int = bash_tool.DEFAULT_BASH_MAX_BYTES,
+) -> registry.ToolRegistry:
     """Builds the tool registry served to the peer agent."""
     tools = registry.ToolRegistry()
-    tools.register(bash_tool.build_bash_tool())
+    tools.register(bash_tool.build_bash_tool(timeout_s, max_bytes))
     return tools
 
 
-def build_backend(kind: str, model: str, system_prompt: str) -> base.Backend:
+def build_backend(
+    kind: str,
+    model: str,
+    system_prompt: str,
+    max_tool_turns: int | None = anthropic_backend.DEFAULT_MAX_TOOL_TURNS,
+    max_tokens: int = anthropic_backend.DEFAULT_MAX_TOKENS,
+    bash_timeout_s: int = bash_tool.DEFAULT_BASH_TIMEOUT_S,
+    bash_max_bytes: int = bash_tool.DEFAULT_BASH_MAX_BYTES,
+) -> base.Backend:
     """Builds a backend by name: anthropic or stub."""
     if kind == "stub":
         return stub_backend.StubBackend()
     if kind == "anthropic":
         return anthropic_backend.AnthropicBackend(
-            model=model, system_prompt=system_prompt, tools=build_default_registry()
+            model=model,
+            system_prompt=system_prompt,
+            tools=build_default_registry(bash_timeout_s, bash_max_bytes),
+            max_tool_turns=max_tool_turns,
+            max_tokens=max_tokens,
         )
     raise ValueError(f"Unknown backend: {kind}")
+
+
+def _resolve_max_turns(
+    request: models.ChatRequest, server_default: int | None
+) -> int | None:
+    """Resolves per-reply tool budget: omitted uses server default."""
+    if "max_tool_turns" not in request.model_fields_set:
+        return server_default
+    # Explicit null means unbounded.
+    return request.max_tool_turns
 
 
 def _resolve_history(
@@ -127,6 +152,8 @@ def _log_completion(
             usage=completion.usage,
             model=identity["model"],
             backend=identity["backend"],
+            status=completion.status,  # type: ignore[arg-type]
+            tool_turns=completion.tool_turns,
         ),
     )
 
@@ -136,6 +163,7 @@ def build_app(
     conversations: store.ConversationStore,
     events: event_log.EventLog,
     system_prompt: str,
+    default_max_tool_turns: int | None = anthropic_backend.DEFAULT_MAX_TOOL_TURNS,
 ) -> fastapi.FastAPI:
     """Builds the FastAPI app over the given backend and storage."""
     app = fastapi.FastAPI(title="peer-agent")
@@ -154,11 +182,17 @@ def build_app(
             log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
         )
         history.append({"role": "user", "content": request.prompt})
-        completion = backend.complete(history, context)
+        cap = _resolve_max_turns(request, default_max_tool_turns)
+        completion = backend.complete(history, context, cap)
         conversations.save(conversation_id, history)
         _log_completion(backend, events, conversation_id, completion)
         return models.ChatResponse(
-            text=completion.text, conversation_id=conversation_id
+            text=completion.text,
+            conversation_id=conversation_id,
+            status=completion.status,  # type: ignore[arg-type]
+            hint=completion.hint,
+            tool_turns=completion.tool_turns,
+            usage=completion.usage,
         )
 
     @app.post("/chat/stream")
@@ -177,20 +211,33 @@ def build_app(
                     log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
                 )
                 history.append({"role": "user", "content": request.prompt})
+                cap = _resolve_max_turns(request, default_max_tool_turns)
                 tool_events: list[base.ToolEvent] = []
+                meta: dict[str, Any] = {}
                 pieces: list[str] = []
-                for token in backend.stream_text(history, tool_events, context):
+                for token in backend.stream_text(
+                    history, tool_events, context, cap, meta
+                ):
                     pieces.append(token)
                     yield (
                         "data: " + json.dumps({"type": "token", "text": token}) + "\n\n"
                     )
+                usage = meta.get("usage")
+                status = str(meta.get("status", "done"))
+                hint = meta.get("hint")
+                tool_turns = int(meta.get("tool_turns", len(tool_events)))
                 conversations.save(conversation_id, history)
                 _log_completion(
                     backend,
                     events,
                     conversation_id,
                     base.Completion(
-                        text="".join(pieces), usage=None, tool_events=tool_events
+                        text="".join(pieces),
+                        usage=usage,
+                        tool_events=tool_events,
+                        status=status,
+                        hint=hint,
+                        tool_turns=tool_turns,
                     ),
                 )
                 for tool_event in tool_events:
@@ -207,7 +254,15 @@ def build_app(
                     )
                 yield (
                     "data: "
-                    + json.dumps({"type": "done", "conversation_id": conversation_id})
+                    + json.dumps(
+                        {
+                            "type": "done",
+                            "conversation_id": conversation_id,
+                            "status": status,
+                            "hint": hint,
+                            "tool_turns": tool_turns,
+                        }
+                    )
                     + "\n\n"
                 )
             except fastapi.HTTPException as exc:
@@ -237,14 +292,35 @@ def main() -> None:
     parser.add_argument("--backend", default="anthropic", choices=["anthropic", "stub"])
     parser.add_argument("--model", default=_DEFAULT_MODEL)
     parser.add_argument("--system-prompt", default=_DEFAULT_SYSTEM_PROMPT)
+    parser.add_argument(
+        "--max-tool-turns", type=int, default=anthropic_backend.DEFAULT_MAX_TOOL_TURNS
+    )
+    parser.add_argument(
+        "--max-tokens", type=int, default=anthropic_backend.DEFAULT_MAX_TOKENS
+    )
+    parser.add_argument(
+        "--bash-timeout", type=int, default=bash_tool.DEFAULT_BASH_TIMEOUT_S
+    )
+    parser.add_argument(
+        "--bash-max-bytes", type=int, default=bash_tool.DEFAULT_BASH_MAX_BYTES
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     dotenv.load_dotenv(_PROJECT_ROOT / ".env")
     app = build_app(
-        build_backend(args.backend, args.model, args.system_prompt),
+        build_backend(
+            args.backend,
+            args.model,
+            args.system_prompt,
+            max_tool_turns=args.max_tool_turns,
+            max_tokens=args.max_tokens,
+            bash_timeout_s=args.bash_timeout,
+            bash_max_bytes=args.bash_max_bytes,
+        ),
         store.ConversationStore(_CONVERSATIONS_DIR),
         event_log.EventLog(_LOGS_DIR),
         args.system_prompt,
+        default_max_tool_turns=args.max_tool_turns,
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

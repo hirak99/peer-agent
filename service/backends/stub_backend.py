@@ -15,7 +15,10 @@ class StubBackend(base.Backend):
         return {"model": "stub", "backend": "stub"}
 
     def complete(
-        self, messages: list[dict[str, Any]], context: base.ToolContext
+        self,
+        messages: list[dict[str, Any]],
+        context: base.ToolContext,
+        max_tool_turns: int | None = 30,
     ) -> base.Completion:
         """Returns a canned reply quoting the latest user turn."""
         last: Any = messages[-1]["content"] if messages else ""
@@ -28,8 +31,15 @@ class StubBackend(base.Backend):
         messages: list[dict[str, Any]],
         tool_events: list[base.ToolEvent],
         context: base.ToolContext,
+        max_tool_turns: int | None = 30,
+        meta: dict[str, Any] | None = None,
     ) -> Iterator[str]:
         """Yields the canned reply word by word."""
-        completion = self.complete(messages, context)
+        completion = self.complete(messages, context, max_tool_turns)
+        if meta is not None:
+            meta["usage"] = completion.usage
+            meta["status"] = completion.status
+            meta["hint"] = completion.hint
+            meta["tool_turns"] = completion.tool_turns
         for word in completion.text.split(" "):
             yield word + " "

@@ -10,13 +10,15 @@ from typing import Any
 
 # Machine name referenced by model tool_use blocks.
 BASH_TOOL_NAME = "bash"
-# Hard cap on command runtime; no permission system yet by design.
-_BASH_TIMEOUT_S = 120
-# Hard cap on captured output kept in history and logs.
-_BASH_MAX_BYTES = 32768
+# Default cap on command runtime; override with --bash-timeout.
+DEFAULT_BASH_TIMEOUT_S = 120
+# Default cap on captured output kept in history and logs.
+DEFAULT_BASH_MAX_BYTES = 32768
 
 
-def _run_command(command: str, workdir: pathlib.Path) -> str:
+def _run_command(
+    command: str, workdir: pathlib.Path, timeout_s: int, max_bytes: int
+) -> str:
     """Runs one shell command in workdir, merging stdout/stderr truncated."""
     try:
         completed = subprocess.run(
@@ -24,21 +26,33 @@ def _run_command(command: str, workdir: pathlib.Path) -> str:
             shell=True,
             capture_output=True,
             text=True,
-            timeout=_BASH_TIMEOUT_S,
+            timeout=timeout_s,
             cwd=workdir,
         )
     except subprocess.TimeoutExpired:
-        return f"<timed out after {_BASH_TIMEOUT_S}s: {command}>"
-    output = (completed.stdout + completed.stderr)[-_BASH_MAX_BYTES:]
-    return output or f"<exit {completed.returncode}, no output>"
+        return f"<timed out after {timeout_s}s: {command}>"
+    full = completed.stdout + completed.stderr
+    if len(full.encode("utf-8", errors="ignore")) > max_bytes or len(full) > max_bytes:
+        tail = full[-max_bytes:]
+        return (
+            f"<truncated, showing last {max_bytes} of ~{len(full)} chars>\n{tail}"
+            or f"<exit {completed.returncode}, no output>"
+        )
+    return full or f"<exit {completed.returncode}, no output>"
 
 
-def build_bash_tool() -> registry.Tool:
+def build_bash_tool(
+    timeout_s: int = DEFAULT_BASH_TIMEOUT_S,
+    max_bytes: int = DEFAULT_BASH_MAX_BYTES,
+) -> registry.Tool:
     """Builds the registry entry for the bash tool."""
 
     def _handle(tool_input: dict[str, Any], context: base.ToolContext) -> str:
-        assert context.workdir is not None, "bash offered without a workdir"
-        return _run_command(str(tool_input.get("command", "")), context.workdir)
+        if context.workdir is None:
+            return "<error: bash offered without a workdir; no command run>"
+        return _run_command(
+            str(tool_input.get("command", "")), context.workdir, timeout_s, max_bytes
+        )
 
     return registry.Tool(
         name=BASH_TOOL_NAME,

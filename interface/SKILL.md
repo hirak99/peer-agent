@@ -37,9 +37,24 @@ Continue it (no need to resend history):
 ```sh
 curl -s localhost:8471/chat -H 'content-type: application/json' \
   -d '{"prompt":"FOLLOW-UP","conversation_id":"ID FROM LAST REPLY","cwd":"/abs/host/workdir"}'
+# {"text":"...","conversation_id":"...","status":"done"}
 ```
 
-Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd]`.
+Long replies yield instead of crashing. If `status` is
+`continuation_required`, resume with the same id until `done`:
+
+```sh
+curl -s localhost:8471/chat -H 'content-type: application/json' \
+  -d '{"prompt":"continue","conversation_id":"SAME_ID","cwd":"/same/dir"}'
+```
+
+Weak models: do not stop at the first partial text. Loop on
+`continuation_required` — that is the gate. Per-reply tool budget defaults
+to 30; pass `"max_tool_turns": 100` (or explicit `null` for unbounded)
+to raise it for a known-long task.
+
+Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd] [--loop] [--max-tool-turns N]`.
+`--loop` auto-sends `continue` while the server asks for it.
 The CLI defaults `--cwd` to its own working directory; `--null-cwd` sends
 `null` for pure Q&A turns (the peer then gets no `bash` tool that turn).
 

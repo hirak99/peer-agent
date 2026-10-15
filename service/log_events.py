@@ -23,8 +23,10 @@ class TokenUsage(pydantic.BaseModel):
     completion_tokens: int | None = None
     # Sum, when the provider reports it (else None).
     total_tokens: int | None = None
-    # Prompt tokens served from cache.
+    # Prompt tokens served from cache (Anthropic cache_read_input_tokens).
     cached_prompt_tokens: int | None = None
+    # Prompt tokens written to cache (Anthropic cache_creation_input_tokens).
+    cache_creation_input_tokens: int | None = None
 
 
 class PromptEvent(BaseEvent):
@@ -51,6 +53,10 @@ class ResponseEvent(BaseEvent):
     model: str
     # Backend kind that produced the reply.
     backend: str
+    # Yield gate outcome: done, or paused for host to send "continue".
+    status: Literal["done", "continuation_required"] = "done"
+    # Tool turns executed to produce this reply.
+    tool_turns: int = 0
 
 
 class ToolCallEvent(BaseEvent):
