@@ -34,6 +34,13 @@ python -m service.server --model claude-opus-5-5 --port 8471    # strongest, pri
 The active model is recorded on every `response` line in `logs/`, so a
 mid-thread model switch stays attributable.
 
+## Prompt caching
+
+Every request marks ephemeral cache breakpoints on the system prompt, the
+last tool definition, and the history tail, so repeated history is served
+from cache (5-min TTL) instead of rebilled. Watch `cached_prompt_tokens` vs
+`cache_creation_input_tokens` on `response` lines in `logs/`.
+
 ## Chat
 
 ```sh

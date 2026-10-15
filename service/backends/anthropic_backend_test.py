@@ -1,5 +1,7 @@
 """Tests for failure-aware tool handling in the Anthropic backend."""
 
+import json
+import pathlib
 import types
 
 from service.backends import anthropic_backend
@@ -92,3 +94,90 @@ def test_unknown_tool_is_an_error() -> None:
     context = base.ToolContext(workdir=None)
     results = backend._run_calls([_call("missing", {}, "id0")], [], context, [])
     assert results[0]["is_error"] is True
+
+
+def _wired_backend() -> anthropic_backend.AnthropicBackend:
+    """Builds a backend with identity fields set, bypassing API construction."""
+    backend, _ = _backend(lambda _: registry.ToolResult(output="ok"))
+    backend._model = "test-model"
+    backend._system_prompt = "test system"
+    backend._max_tokens = 64
+    return backend
+
+
+def test_system_param_carries_cache_breakpoint() -> None:
+    """The system prompt is sent as a cached text block."""
+    assert _wired_backend()._system_param() == [
+        {
+            "type": "text",
+            "text": "test system",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
+def test_extra_params_breakpoint_marks_last_tool_only(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The last tool definition is cached; the registry copy is untouched."""
+    backend = _wired_backend()
+    params = backend._extra_params(base.ToolContext(workdir=tmp_path))
+    assert params["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in backend._tools.anthropic_schemas()[-1]
+
+
+def test_message_params_marks_tail_without_mutating_history() -> None:
+    """Breakpoints go on per-request copies; stored history stays clean."""
+    backend = _wired_backend()
+    history: list[dict[str, Any]] = [
+        {"role": "user", "content": "first"},
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "second"}],
+        },
+        {"role": "user", "content": "third"},
+    ]
+    params = backend._message_params(history)
+    assert history[-1] == {"role": "user", "content": "third"}
+    assert params[-1]["content"] == [
+        {
+            "type": "text",
+            "text": "third",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+    tool_history: list[dict[str, Any]] = [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "t1", "input": {}}],
+        },
+    ]
+    tool_params = backend._message_params(tool_history)
+    assert tool_params[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in tool_history[0]["content"][-1]
+    assert backend._message_params([]) == []
+
+
+def test_complete_leaves_stored_history_cache_free() -> None:
+    """The full request is cache-marked but persistence sees plain history."""
+    backend = _wired_backend()
+    calls: list[dict[str, Any]] = []
+
+    def _create(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            content=[types.SimpleNamespace(type="text", text="done")],
+            usage=types.SimpleNamespace(input_tokens=50, output_tokens=5),
+        )
+
+    backend._client = types.SimpleNamespace(
+        messages=types.SimpleNamespace(create=_create)
+    )
+    history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
+    completion = backend.complete(history, base.ToolContext(workdir=None), None)
+    assert completion.text == "done"
+    assert "cache_control" not in json.dumps(history)
+    sent = calls[0]
+    assert sent["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert sent["messages"][-1]["content"][0]["cache_control"] == {"type": "ephemeral"}

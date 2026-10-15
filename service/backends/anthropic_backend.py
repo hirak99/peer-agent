@@ -41,6 +41,10 @@ _OVERFLOW_MARKERS = (
 _HOLD_AFTER_IDENTICAL_FAILURES = 5
 # Cap on remembered call history; trailing streaks only need the tail.
 _SEEN_HISTORY_CAP = 512
+# Prompt-cache breakpoint: prefix content is reused across calls (5-min TTL).
+# Attached to the system prompt, the last tool definition, and the history
+# tail on every request; per-request copies keep stored history clean.
+_CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
 
 
 class AnthropicBackend(base.Backend):
@@ -138,8 +142,8 @@ class AnthropicBackend(base.Backend):
         response = self._client.messages.create(
             model=compact_model,
             max_tokens=summary_budget,
-            system=compaction.SUMMARY_SYSTEM_PROMPT,
-            messages=cast(list[anthropic.types.MessageParam], summarizer_messages),
+            system=self._system_param(compaction.SUMMARY_SYSTEM_PROMPT),
+            messages=self._message_params(summarizer_messages),
         )
         return "".join(
             block.text for block in response.content if block.type == "text"
@@ -224,10 +228,41 @@ class AnthropicBackend(base.Backend):
             cache_creation_input_tokens=created,
         )
 
+    def _system_param(self, text: str | None = None) -> Any:
+        """Returns a system prompt carrying a cache breakpoint."""
+        return [
+            {
+                "type": "text",
+                "text": text if text is not None else self._system_prompt,
+                "cache_control": dict(_CACHE_BREAKPOINT),
+            }
+        ]
+
     def _message_params(
         self, messages: list[dict[str, Any]]
     ) -> list[anthropic.types.MessageParam]:
-        return cast(list[anthropic.types.MessageParam], messages)
+        """Copies history with a cache breakpoint on the tail."""
+        params = [dict(message) for message in messages]
+        if not params:
+            return cast(list[anthropic.types.MessageParam], params)
+        last = params[-1]
+        content = last.get("content")
+        if isinstance(content, str):
+            last["content"] = [
+                {
+                    "type": "text",
+                    "text": content,
+                    "cache_control": dict(_CACHE_BREAKPOINT),
+                }
+            ]
+        elif isinstance(content, list) and content:
+            blocks = [
+                dict(block) if isinstance(block, dict) else block for block in content
+            ]
+            if isinstance(blocks[-1], dict):
+                blocks[-1]["cache_control"] = dict(_CACHE_BREAKPOINT)
+            last["content"] = blocks
+        return cast(list[anthropic.types.MessageParam], params)
 
     def _extra_params(
         self, context: base.ToolContext, *, with_tools: bool = True
@@ -237,7 +272,9 @@ class AnthropicBackend(base.Backend):
         schemas = self._tools.anthropic_schemas()
         if not schemas:
             return {}
-        return {"tools": cast(list[anthropic.types.ToolUnionParam], schemas)}
+        copied = [dict(schema) for schema in schemas]
+        copied[-1]["cache_control"] = dict(_CACHE_BREAKPOINT)
+        return {"tools": cast(list[anthropic.types.ToolUnionParam], copied)}
 
     @staticmethod
     def _call_key(name: str, tool_input: dict[str, Any]) -> str:
@@ -341,7 +378,7 @@ class AnthropicBackend(base.Backend):
         response = self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
-            system=self._system_prompt,
+            system=self._system_param(),
             messages=self._message_params(messages),
             **self._extra_params(base.ToolContext(workdir=None), with_tools=False),
         )
@@ -392,7 +429,7 @@ class AnthropicBackend(base.Backend):
                 response = self._client.messages.create(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    system=self._system_prompt,
+                    system=self._system_param(),
                     messages=self._message_params(messages),
                     **self._extra_params(context),
                 )
@@ -480,7 +517,7 @@ class AnthropicBackend(base.Backend):
                 stream_manager = self._client.messages.stream(
                     model=self._model,
                     max_tokens=self._max_tokens,
-                    system=self._system_prompt,
+                    system=self._system_param(),
                     messages=self._message_params(messages),
                     **self._extra_params(context),
                 )
