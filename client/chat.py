@@ -20,7 +20,11 @@ _REQUEST_TIMEOUT_S = 1800.0
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Chat with the peer agent.")
-    parser.add_argument("prompt", help="Prompt to send.")
+    parser.add_argument(
+        "prompt",
+        help="Prompt to send. Slash commands: '/compact' compacts stored "
+        "history (requires --conversation-id) without a model turn.",
+    )
     parser.add_argument("--conversation-id", default=None)
     parser.add_argument("--port", type=int, default=server.DEFAULT_PORT)
     parser.add_argument("--stream", action="store_true")
@@ -37,13 +41,6 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Auto-send 'continue' while the server asks for continuation.",
     )
-    compact_group = parser.add_mutually_exclusive_group()
-    compact_group.add_argument(
-        "--compact", action="store_true", help="Force compaction this turn."
-    )
-    compact_group.add_argument(
-        "--no-compact", action="store_true", help="Inhibit compaction this turn."
-    )
     return parser.parse_args()
 
 
@@ -56,11 +53,26 @@ def _build_payload(args: argparse.Namespace, prompt: str) -> dict[str, Any]:
         payload["conversation_id"] = args.conversation_id
     if args.host_max_tool_turns is not None:
         payload["host_max_tool_turns"] = args.host_max_tool_turns
-    if args.compact:
-        payload["compact"] = True
-    elif args.no_compact:
-        payload["compact"] = False
     return payload
+
+
+def _run_compact(base_url: str, conversation_id: str) -> None:
+    """Calls POST /compact and prints the outcome (no model turn)."""
+    response = httpx.post(
+        f"{base_url}/compact",
+        json={"conversation_id": conversation_id},
+        timeout=_REQUEST_TIMEOUT_S,
+    )
+    response.raise_for_status()
+    body = response.json()
+    print(
+        f"conversation_id={body['conversation_id']} "
+        f"compacted={body['compacted']} "
+        f"pre_messages={body['pre_messages']} "
+        f"post_messages={body['post_messages']} "
+        f"pre_tokens_est={body.get('pre_tokens_est')} "
+        f"post_tokens_est={body.get('post_tokens_est')}"
+    )
 
 
 def _run_stream(base_url: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -102,6 +114,13 @@ def main() -> None:
     args = _parse_args()
     base_url = f"http://127.0.0.1:{args.port}"
     prompt = args.prompt
+    # Slash-command dispatch (extend here for future commands).
+    if prompt.strip() == "/compact":
+        if args.conversation_id is None:
+            print("error: /compact requires --conversation-id", file=sys.stderr)
+            sys.exit(2)
+        _run_compact(base_url, args.conversation_id)
+        return
     payload = _build_payload(args, prompt)
     first = True
     while True:

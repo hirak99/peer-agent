@@ -57,8 +57,9 @@ exceeds the model's input budget (read from the Models API at startup, 1M for
 current Claude 5.5 models), old turns are summarized and replaced, keeping the
 last `--compact-keep-messages` (default 20). Full history stays in `logs/`;
 compactions are logged as `compaction` events. Per-turn override:
-`{"compact": true/false}` (CLI: `--compact` / `--no-compact`). Manual:
-`POST /compact {"conversation_id": "..."}`. On context-overflow the turn
+`{"compact": true/false}`. Manual, no model turn: `POST /compact
+{"conversation_id": "..."}` (CLI: `python client/chat.py "/compact"
+--conversation-id <id> --port 8471`). On context-overflow the turn
 retries once after compaction instead of failing. Server knobs:
 `--compact-model` (e.g. haiku for cheap summaries), `--compact-summary-max-tokens`,
 `--compact-context-window`.
