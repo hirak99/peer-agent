@@ -28,6 +28,8 @@ class ToolEvent:
     tool_input: dict[str, Any]
     # Truncated handler output fed back to the model.
     output: str
+    # Why the call failed; None means success.
+    failure_reason: str | None = None
 
 
 @dataclasses.dataclass

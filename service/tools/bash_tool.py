@@ -16,9 +16,19 @@ DEFAULT_BASH_TIMEOUT_S = 120
 DEFAULT_BASH_MAX_BYTES = 32768
 
 
+def _tail(full: str, max_bytes: int) -> str:
+    """Truncates output to its tail, marking the cut when one happened."""
+    if (
+        len(full) <= max_bytes
+        and len(full.encode("utf-8", errors="ignore")) <= max_bytes
+    ):
+        return full
+    return f"<truncated, showing last {max_bytes} of ~{len(full)} chars>\n{full[-max_bytes:]}"
+
+
 def _run_command(
     command: str, workdir: pathlib.Path, timeout_s: int, max_bytes: int
-) -> str:
+) -> registry.ToolResult:
     """Runs one shell command in workdir, merging stdout/stderr truncated."""
     try:
         completed = subprocess.run(
@@ -30,15 +40,20 @@ def _run_command(
             cwd=workdir,
         )
     except subprocess.TimeoutExpired:
-        return f"<timed out after {timeout_s}s: {command}>"
-    full = completed.stdout + completed.stderr
-    if len(full.encode("utf-8", errors="ignore")) > max_bytes or len(full) > max_bytes:
-        tail = full[-max_bytes:]
-        return (
-            f"<truncated, showing last {max_bytes} of ~{len(full)} chars>\n{tail}"
-            or f"<exit {completed.returncode}, no output>"
+        return registry.ToolResult(
+            output=f"<timed out after {timeout_s}s: {command}>",
+            failure_reason=f"timed out after {timeout_s}s",
         )
-    return full or f"<exit {completed.returncode}, no output>"
+    full = completed.stdout + completed.stderr
+    if completed.returncode != 0:
+        body = _tail(full, max_bytes) if full else "<no output>"
+        return registry.ToolResult(
+            output=f"{body}\n<failed with exit {completed.returncode}>",
+            failure_reason=f"exit code {completed.returncode}",
+        )
+    if not full:
+        return registry.ToolResult(output="<ok, no output>")
+    return registry.ToolResult(output=_tail(full, max_bytes))
 
 
 def build_bash_tool(
@@ -47,9 +62,14 @@ def build_bash_tool(
 ) -> registry.Tool:
     """Builds the registry entry for the bash tool."""
 
-    def _handle(tool_input: dict[str, Any], context: base.ToolContext) -> str:
+    def _handle(
+        tool_input: dict[str, Any], context: base.ToolContext
+    ) -> registry.ToolResult:
         if context.workdir is None:
-            return "<error: bash offered without a workdir; no command run>"
+            return registry.ToolResult(
+                output="<error: bash offered without a workdir; no command run>",
+                failure_reason="no workdir",
+            )
         return _run_command(
             str(tool_input.get("command", "")), context.workdir, timeout_s, max_bytes
         )

@@ -141,7 +141,11 @@ def _log_completion(
         )
         events.record(
             conversation_id,
-            log_events.ToolResultEvent(name=tool_event.name, output=tool_event.output),
+            log_events.ToolResultEvent(
+                name=tool_event.name,
+                output=tool_event.output,
+                failure_reason=tool_event.failure_reason,
+            ),
         )
     identity = backend.describe()
     events.record(
@@ -248,6 +252,7 @@ def build_app(
                                 "type": "tool_call",
                                 "name": tool_event.name,
                                 "input": tool_event.tool_input,
+                                "failure_reason": tool_event.failure_reason,
                             }
                         )
                         + "\n\n"

@@ -79,6 +79,9 @@ class ToolResultEvent(BaseEvent):
     name: str
     # Truncated handler output.
     output: str
+    # Why the call failed; None means success. Shown so the host can see
+    # peer tool failures without reading full outputs.
+    failure_reason: str | None = None
 
 
 class SystemPromptEvent(BaseEvent):

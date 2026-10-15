@@ -9,6 +9,17 @@ from typing import Any
 
 
 @dataclasses.dataclass
+class ToolResult:
+    """One tool handler outcome: result text plus optional failure reason."""
+
+    # Truncated handler output fed back to the model.
+    output: str
+    # Why the call failed; None means success. "unknown" when the handler
+    # knows it failed but not why. Presence (not content) is the signal.
+    failure_reason: str | None = None
+
+
+@dataclasses.dataclass
 class Tool:
     """One named capability offered to the model backend."""
 
@@ -18,8 +29,8 @@ class Tool:
     description: str
     # JSON Schema object describing the tool input.
     input_schema: dict[str, Any]
-    # Handler mapping decoded input and turn context to result text.
-    handler: Callable[[dict[str, Any], base.ToolContext], str]
+    # Handler mapping decoded input and turn context to a result.
+    handler: Callable[[dict[str, Any], base.ToolContext], ToolResult]
 
 
 class ToolRegistry:

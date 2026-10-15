@@ -1,5 +1,6 @@
 """Anthropic backend with a server-side tool loop."""
 
+import hashlib
 import json
 import os
 from collections.abc import Iterator
@@ -20,9 +21,13 @@ _ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
 DEFAULT_HOST_MAX_TOOL_TURNS: int | None = None
 # Default per-turn output budget; override with --max-tokens.
 DEFAULT_MAX_TOKENS = 8192
-# After this many consecutive identical (name+input) calls, nudge the model
-# to state why before continuing. Never blocks.
-_REPEAT_FRICTION_AFTER = 5
+# After this many consecutive identical (name+input) *failing* calls, hold
+# the next one (do not execute) and ask the model to justify retrying.
+# The hold consumes the streak, so the retry always runs. Successes and
+# different calls reset the streak. Volume alone never holds.
+_HOLD_AFTER_IDENTICAL_FAILURES = 5
+# Cap on remembered call history; trailing streaks only need the tail.
+_SEEN_HISTORY_CAP = 512
 
 
 class AnthropicBackend(base.Backend):
@@ -147,42 +152,72 @@ class AnthropicBackend(base.Backend):
         calls: list[Any],
         tool_events: list[base.ToolEvent],
         context: base.ToolContext,
-        seen_keys: list[str],
+        seen: list[tuple[str, bool]],
     ) -> list[dict[str, Any]]:
         """Executes tool_use blocks into Anthropic tool_result blocks."""
         results: list[dict[str, Any]] = []
         for call in calls:
             tool = self._tools.get(call.name)
             tool_input = dict(call.input) if isinstance(call.input, dict) else {}
-            key = self._call_key(call.name, tool_input)
+            digest = hashlib.sha256(
+                self._call_key(call.name, tool_input).encode()
+            ).hexdigest()
             trailing = 0
-            for prior in reversed(seen_keys):
-                if prior == key:
-                    trailing += 1
-                else:
+            for prior_digest, prior_failed in reversed(seen):
+                if prior_digest != digest or not prior_failed:
                     break
-            seen_keys.append(key)
-            if tool is None:
-                output = f"<unknown tool: {call.name}>"
-            else:
-                output = tool.handler(tool_input, context)
-            if (
-                trailing + 1 >= _REPEAT_FRICTION_AFTER
-                and (trailing + 1) % _REPEAT_FRICTION_AFTER == 0
-            ):
+                trailing += 1
+            if trailing >= _HOLD_AFTER_IDENTICAL_FAILURES:
+                reason = f"held: identical call failed {trailing} times in a row"
                 output = (
-                    f"[note: you have called `{call.name}` with identical input "
-                    f"{trailing + 1} times in a row. Reply with one sentence "
-                    f"stating why you need it again, then continue.]\n{output}"
+                    f"Held: this exact `{call.name}` call failed {trailing} "
+                    "times in a row, so it was not run. Write a sentence to "
+                    "yourself about why retrying could help, then retry if "
+                    "you still want to."
                 )
+                del seen[len(seen) - trailing :]
+                seen.append((digest, False))
+                tool_events.append(
+                    base.ToolEvent(
+                        name=call.name,
+                        tool_input=tool_input,
+                        output=output,
+                        failure_reason=reason,
+                    )
+                )
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": output,
+                        "is_error": True,
+                    }
+                )
+                continue
+            if tool is None:
+                result = registry.ToolResult(
+                    output=f"<unknown tool: {call.name}>",
+                    failure_reason="unknown tool",
+                )
+            else:
+                result = tool.handler(tool_input, context)
+            seen.append((digest, result.failure_reason is not None))
+            if len(seen) > _SEEN_HISTORY_CAP:
+                del seen[:-_SEEN_HISTORY_CAP]
             tool_events.append(
-                base.ToolEvent(name=call.name, tool_input=tool_input, output=output)
+                base.ToolEvent(
+                    name=call.name,
+                    tool_input=tool_input,
+                    output=result.output,
+                    failure_reason=result.failure_reason,
+                )
             )
             results.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": call.id,
-                    "content": output,
+                    "content": result.output,
+                    "is_error": result.failure_reason is not None,
                 }
             )
         return results
@@ -243,7 +278,7 @@ class AnthropicBackend(base.Backend):
         """Runs model turns until final text, executing tools between turns."""
         cap = host_max_tool_turns
         tool_events: list[base.ToolEvent] = []
-        seen_keys: list[str] = []
+        seen: list[tuple[str, bool]] = []
         usage: log_events.TokenUsage | None = None
         tool_turns = 0
         text_prefix = ""
@@ -296,7 +331,7 @@ class AnthropicBackend(base.Backend):
             messages.append(
                 {
                     "role": "user",
-                    "content": self._run_calls(calls, tool_events, context, seen_keys),
+                    "content": self._run_calls(calls, tool_events, context, seen),
                 }
             )
             tool_turns += 1
@@ -312,7 +347,7 @@ class AnthropicBackend(base.Backend):
     ) -> Iterator[str]:
         """Streams reply tokens live, running tool turns between streams."""
         cap = host_max_tool_turns
-        seen_keys: list[str] = []
+        seen: list[tuple[str, bool]] = []
         usage: log_events.TokenUsage | None = None
         tool_turns = 0
         while True:
@@ -361,7 +396,7 @@ class AnthropicBackend(base.Backend):
             messages.append(
                 {
                     "role": "user",
-                    "content": self._run_calls(calls, tool_events, context, seen_keys),
+                    "content": self._run_calls(calls, tool_events, context, seen),
                 }
             )
             tool_turns += 1
