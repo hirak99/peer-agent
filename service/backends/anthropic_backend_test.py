@@ -9,7 +9,7 @@ from service.backends import anthropic_backend
 from service.backends import base
 from service.tools import registry
 
-from typing import Any
+from typing import Any, cast
 
 # pyright: reportPrivateUsage=false
 
@@ -155,7 +155,8 @@ def test_message_params_marks_tail_without_mutating_history() -> None:
         },
     ]
     tool_params = backend._message_params(tool_history)
-    assert tool_params[0]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    marked = cast(Any, tool_params[0]["content"])[-1]
+    assert marked["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in tool_history[0]["content"][-1]
     assert backend._message_params([]) == []
 
@@ -172,8 +173,8 @@ def test_complete_leaves_stored_history_cache_free() -> None:
             usage=types.SimpleNamespace(input_tokens=50, output_tokens=5),
         )
 
-    backend._client = types.SimpleNamespace(
-        messages=types.SimpleNamespace(create=_create)
+    backend._client = cast(
+        Any, types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
     )
     history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
     completion = backend.complete(history, base.ToolContext(workdir=None), None)
@@ -223,8 +224,8 @@ def test_complete_skips_breakpoints_when_sustained_idle() -> None:
             usage=types.SimpleNamespace(input_tokens=50, output_tokens=5),
         )
 
-    backend._client = types.SimpleNamespace(
-        messages=types.SimpleNamespace(create=_create)
+    backend._client = cast(
+        Any, types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
     )
     history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
     backend.complete(history, base.ToolContext(workdir=None), None)
