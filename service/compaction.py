@@ -88,9 +88,33 @@ def needs_compaction(
     return estimated_tokens + (reserve_tokens or 0) + margin_tokens > context_window
 
 
-def _is_plain_user_message(message: dict[str, Any]) -> bool:
-    """Reports whether a message is a plain user text turn."""
-    return message.get("role") == "user" and isinstance(message.get("content"), str)
+def _has_tool_use(message: dict[str, Any]) -> bool:
+    """Reports whether a message carries tool_use blocks."""
+    content = message.get("content")
+    return (
+        message.get("role") == "assistant"
+        and isinstance(content, list)
+        and any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content)
+    )
+
+
+def _has_tool_result(message: dict[str, Any]) -> bool:
+    """Reports whether a message carries tool_result blocks."""
+    content = message.get("content")
+    return (
+        message.get("role") == "user"
+        and isinstance(content, list)
+        and any(
+            isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+        )
+    )
+
+
+def _splits_pair(messages: list[dict[str, Any]], index: int) -> bool:
+    """Reports whether splitting before index severs a tool_use/result pair."""
+    if 0 < index < len(messages) and _has_tool_use(messages[index - 1]):
+        return True
+    return 0 <= index < len(messages) and _has_tool_result(messages[index])
 
 
 def split_for_compaction(
@@ -104,10 +128,15 @@ def split_for_compaction(
     if len(messages) <= keep_cast:
         return [], list(messages)
     index = len(messages) - keep_cast
-    while index < len(messages) and not _is_plain_user_message(messages[index]):
+    while index < len(messages) and _splits_pair(messages, index):
         index += 1
     if index >= len(messages):
-        return [], list(messages)
+        # Tail ends mid-pair (no forward boundary); scan back instead.
+        index = len(messages) - keep_cast
+        while index > 0 and _splits_pair(messages, index):
+            index -= 1
+        if index <= 0:
+            return [], list(messages)
     return list(messages[:index]), list(messages[index:])
 
 

@@ -1,5 +1,7 @@
 """Tests for margin-triggered history compaction helpers."""
 
+# pyright: reportPrivateUsage=false
+
 import pathlib
 
 from fastapi import testclient
@@ -37,6 +39,54 @@ def test_split_keeps_tool_pairs_intact() -> None:
         "role": "user",
         "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "out"}],
     }
+
+
+def test_split_tool_only_tail_still_splits() -> None:
+    """A long tool loop with no plain-text tail still yields a split."""
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "do the task"}]
+    for seq in range(36):
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": f"t{seq}", "name": "bash", "input": {}}],
+            }
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": f"t{seq}", "content": "out"}],
+            }
+        )
+    old, recent = compaction.split_for_compaction(messages, 20)
+    assert old, "expected a split, not a decline"
+    assert len(recent) <= 21
+    # No severed pair across the boundary.
+    assert not (
+        compaction._has_tool_use(old[-1]) or compaction._has_tool_result(recent[0])
+    )
+
+
+def test_split_tail_ending_mid_pair_scans_back() -> None:
+    """Forward scan running off the end falls back to a backward split."""
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "u0"},
+        {"role": "assistant", "content": "a0"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "t1", "name": "bash", "input": {}}],
+        },
+    ]
+    old, recent = compaction.split_for_compaction(messages, 1)
+    assert old == [
+        {"role": "user", "content": "u0"},
+        {"role": "assistant", "content": "a0"},
+    ]
+    assert recent == [
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "t1", "name": "bash", "input": {}}],
+        },
+    ]
 
 
 def test_needs_compaction_margin_math() -> None:
