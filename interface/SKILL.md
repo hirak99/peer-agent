@@ -40,22 +40,29 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 # {"text":"...","conversation_id":"...","status":"done"}
 ```
 
-If `status` is `continuation_required`, resume with the same id until
-`done` — that is the gate, do not stop at the first partial text:
+Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd] [--loop] [--host-max-tool-turns N]`.
+The CLI defaults `--cwd` to its own working directory; `--null-cwd`
+sends `null` for pure Q&A turns (no filesystem tools that turn, though
+web fetching still works).
+
+## Tool budget (opt-in)
+
+Unlimited by default. To checkpoint long runs, set
+`"host_max_tool_turns": N` on a call (server flag
+`--host-max-tool-turns N` sets the default).
+
+When the budget is spent the reply has `status:
+continuation_required` with partial text. To get the full answer,
+resume with the same id until `done` — do not stop at the first
+partial text:
 
 ```sh
 curl -s localhost:8471/chat -H 'content-type: application/json' \
   -d '{"prompt":"continue","conversation_id":"SAME_ID","cwd":"/same/dir"}'
 ```
 
-To force such a checkpoint yourself, set `"host_max_tool_turns": N` on
-a call (server flag `--host-max-tool-turns N` sets the default).
-
-Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd] [--loop] [--host-max-tool-turns N]`.
-`--loop` auto-sends `continue` while the server asks for it.
-The CLI defaults `--cwd` to its own working directory; `--null-cwd`
-sends `null` for pure Q&A turns (no filesystem tools that turn, though
-web fetching still works).
+`--loop` auto-sends `continue` while the server asks for it. You may
+also redirect with a new prompt or stop instead of continuing.
 
 ## Notes
 
