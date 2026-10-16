@@ -34,6 +34,8 @@ python -m service.server --model anthropic/claude-opus-5-5 --port 8471    # stro
 
 Providers: `anthropic`, `openai` (hosted), `local` (any OpenAI-dialect
 endpoint — needs `--base-url`, e.g. `http://localhost:9931/v1`), `stub`.
+Single-model servers ignore the model field, so `--model local` alone
+suffices (an alias like `local/qwen` is passed through and logged).
 API keys come from provider env vars (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `LOCAL_MODEL_API_KEY`); `--api-key-env NAME` overrides
 with another variable. Providers without a metadata API take

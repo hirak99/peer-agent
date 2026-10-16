@@ -63,6 +63,10 @@ def parse_model_spec(spec: str) -> tuple[str, str]:
     """Splits a provider/model spec, or raises listing known providers."""
     if spec == "stub":
         return "stub", "stub"
+    if spec == "local":
+        # Single-model servers (llama.cpp) ignore the model field, so a
+        # bare provider is enough; "default" is only ever logged.
+        return "local", "default"
     if "/" in spec:
         provider, name = spec.split("/", 1)
         if provider in _PROVIDERS and name:
@@ -70,7 +74,7 @@ def parse_model_spec(spec: str) -> tuple[str, str]:
     raise ValueError(
         f"Unknown model spec: {spec!r}. Use provider/model with one of: "
         f"{', '.join(_PROVIDERS)} (e.g. anthropic/claude-opus-5-5, "
-        "local/qwen3 --base-url http://localhost:9931/v1)."
+        "local --base-url http://localhost:9931/v1)."
     )
 
 
