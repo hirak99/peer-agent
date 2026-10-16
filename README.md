@@ -142,6 +142,12 @@ runs from the host agent's project directory, not from here:
 
 This exposes a `peer_chat(prompt, conversation_id?, cwd?)` tool.
 
+## Host instructions
+
+See `docs/host-instruction-examples.md` for copy-pasteable coordination
+prompts: a capable host working with a stronger peer reviewer, or a
+strong host delegating narrow subtasks to a weaker peer executor.
+
 ## Layout
 
 - `service/server.py` — FastAPI app: `POST /chat`, `POST /chat/stream`, `POST /compact`, `GET /health`
