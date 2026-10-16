@@ -51,3 +51,17 @@ empty) is never persisted: proactive compaction skips the splice and
 continues the turn on uncompacted history, `POST /compact` fails with
 502, and overflow recovery fails the turn instead of writing a cut-off
 handoff. Raise `--compact-summary-max-tokens` and retry.
+
+## Backups and recovery
+
+Every compaction snapshots the pre-compaction history to
+`conversations/backups/<conversation_id>/<UTC-timestamp>.json` before
+overwriting it (newest 5 kept, older pruned). The `compaction` log event
+carries the snapshot in `backup_path` plus the `summary_budget` used.
+History writes are atomic (temp file + rename).
+
+To recover: stop the server, then copy the snapshot back over
+`conversations/<conversation_id>.json`. Snapshots for proactive and
+recovery compactions predate the triggering turn's prompt — resend that
+prompt afterwards (it is the `prompt` event just before the `compaction`
+event in `logs/<id>.jsonl`). Manual `/compact` snapshots are exact.

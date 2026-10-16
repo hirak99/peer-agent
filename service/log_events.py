@@ -103,6 +103,10 @@ class CompactionEvent(BaseEvent):
     model: str
     # Why compaction ran.
     reason: Literal["margin", "forced", "error_recovery", "manual"]
+    # Pre-compaction snapshot for manual recovery; None when unknown.
+    backup_path: str | None = None
+    # Output budget the summary was generated under; None when unknown.
+    summary_budget: int | None = None
 
 
 class SystemPromptEvent(BaseEvent):

@@ -106,11 +106,19 @@ def maybe_emit_system_prompt(
         conversations.save_system_prompt(conversation_id, system_prompt)
 
 
+def _summary_budget(backend: base.Backend | None) -> int | None:
+    """Returns the summarizer output budget, or None when unknown."""
+    budget = getattr(backend, "_compact_summary_max_tokens", None)
+    return budget if isinstance(budget, int) else None
+
+
 def log_compaction(
     events: event_log.EventLog,
     conversation_id: str,
     model: str,
     record: base.CompactionRecord,
+    backup_path: str | None = None,
+    summary_budget: int | None = None,
 ) -> None:
     """Records a compaction event for later inspection."""
     reason = record.reason
@@ -125,6 +133,8 @@ def log_compaction(
             post_tokens_est=record.post_tokens_est,
             model=model,
             reason=reason,  # type: ignore[arg-type]
+            backup_path=backup_path,
+            summary_budget=summary_budget,
         ),
     )
 
@@ -260,7 +270,15 @@ def begin_turn(
             events, backend, compaction_config, history, forced=request.compact is True
         )
         if record is not None and backend is not None:
-            log_compaction(events, conversation_id, backend.describe()["model"], record)
+            backup_path = conversations.backup_current(conversation_id)
+            log_compaction(
+                events,
+                conversation_id,
+                backend.describe()["model"],
+                record,
+                backup_path=backup_path,
+                summary_budget=_summary_budget(backend),
+            )
     return TurnState(
         conversation_id=conversation_id,
         history=history,
@@ -308,6 +326,7 @@ def compact_conversation(
             detail="Summarizer returned an empty summary; compaction refused.",
         )
     compacted = compaction.build_compacted_history(summary, recent, len(old))
+    backup_path = conversations.backup_current(conversation_id)
     conversations.save(conversation_id, compacted)
     record = base.CompactionRecord(
         pre_messages=len(history),
@@ -316,7 +335,14 @@ def compact_conversation(
         post_tokens_est=compaction.estimate_tokens(compacted),
         reason="manual",
     )
-    log_compaction(events, conversation_id, backend.describe()["model"], record)
+    log_compaction(
+        events,
+        conversation_id,
+        backend.describe()["model"],
+        record,
+        backup_path=backup_path,
+        summary_budget=_summary_budget(backend),
+    )
     return {
         "conversation_id": conversation_id,
         "compacted": True,
@@ -343,11 +369,14 @@ def finish_turn(
         ),
     )
     if completion.compaction is not None:
+        backup_path = conversations.backup_current(state.conversation_id)
         log_compaction(
             events,
             state.conversation_id,
             backend.describe()["model"],
             completion.compaction,
+            backup_path=backup_path,
+            summary_budget=_summary_budget(backend),
         )
     conversations.save(state.conversation_id, state.history)
     log_completion(backend, events, state.conversation_id, completion)
@@ -377,8 +406,14 @@ def finish_stream_turn(
     tool_turns = int(meta.get("tool_turns", len(tool_events)))
     record = meta.get("compaction")
     if isinstance(record, base.CompactionRecord):
+        backup_path = conversations.backup_current(state.conversation_id)
         log_compaction(
-            events, state.conversation_id, backend.describe()["model"], record
+            events,
+            state.conversation_id,
+            backend.describe()["model"],
+            record,
+            backup_path=backup_path,
+            summary_budget=_summary_budget(backend),
         )
     conversations.save(state.conversation_id, state.history)
     log_completion(

@@ -302,8 +302,78 @@ def test_manual_compact_fails_on_truncated_summary(tmp_path: pathlib.Path) -> No
         "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
     ).json()
     cid = first["conversation_id"]
-    client.post("/chat", json={"prompt": "two", "conversation_id": cid, "cwd": str(tmp_path)})
+    client.post(
+        "/chat", json={"prompt": "two", "conversation_id": cid, "cwd": str(tmp_path)}
+    )
     before = conversations.load(cid)
     response = client.post("/compact", json={"conversation_id": cid})
     assert response.status_code == 502
     assert conversations.load(cid) == before
+
+
+class _BudgetedStubBackend(stub_backend.StubBackend):
+    """Stub carrying a summary budget like the real backends."""
+
+    _compact_summary_max_tokens: int = 32
+
+
+def _compaction_events(tmp_path: pathlib.Path, cid: str) -> list[dict[str, Any]]:
+    """Reads compaction events for a conversation from its JSONL log."""
+    lines = (tmp_path / "logs" / f"{cid}.jsonl").read_text().splitlines()
+    return [
+        event
+        for line in lines
+        if (event := json.loads(line)).get("type") == "compaction"
+    ]
+
+
+def test_manual_compact_snapshots_history(tmp_path: pathlib.Path) -> None:
+    """POST /compact backs up the exact pre-compaction history first."""
+    conversations = store.ConversationStore(tmp_path / "conversations")
+    events = event_log.EventLog(tmp_path / "logs")
+    app = server.build_app(
+        _BudgetedStubBackend(),
+        conversations,
+        events,
+        "sys",
+        compaction_config=compaction.CompactionConfig(keep_messages=2),
+    )
+    client = testclient.TestClient(app)
+    first: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
+    ).json()
+    cid = first["conversation_id"]
+    client.post(
+        "/chat", json={"prompt": "two", "conversation_id": cid, "cwd": str(tmp_path)}
+    )
+    client.post(
+        "/chat", json={"prompt": "three", "conversation_id": cid, "cwd": str(tmp_path)}
+    )
+    before = conversations.load(cid)
+    compacted_body: dict[str, Any] = client.post(
+        "/compact", json={"conversation_id": cid}
+    ).json()
+    assert compacted_body["compacted"] is True
+    snapshots = sorted((tmp_path / "conversations" / "backups" / cid).glob("*.json"))
+    assert len(snapshots) == 1
+    assert json.loads(snapshots[0].read_text()) == before
+    (event,) = _compaction_events(tmp_path, cid)
+    assert event["backup_path"] == str(snapshots[0])
+    assert event["summary_budget"] == 32
+
+
+def test_proactive_compaction_snapshots_history(tmp_path: pathlib.Path) -> None:
+    """A margin-triggered compaction also leaves a restorable snapshot."""
+    client = _tiny_window_client(tmp_path, stub_backend.StubBackend())[0]
+    first: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
+    ).json()
+    cid = first["conversation_id"]
+    client.post(
+        "/chat",
+        json={"prompt": "two", "conversation_id": cid, "cwd": str(tmp_path)},
+    )
+    snapshots = sorted((tmp_path / "conversations" / "backups" / cid).glob("*.json"))
+    assert len(snapshots) == 1
+    (event,) = _compaction_events(tmp_path, cid)
+    assert event["backup_path"] == str(snapshots[0])
