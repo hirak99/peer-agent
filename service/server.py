@@ -17,6 +17,7 @@ from service import models
 from service import store
 from service.backends import anthropic_backend
 from service.backends import base
+from service.backends import openai_compat_backend
 from service.backends import stub_backend
 from service.tools import bash_tool
 from service.tools import edit_tool
@@ -27,8 +28,12 @@ from typing import Any
 
 # Hardcoded loopback port; override with --port.
 DEFAULT_PORT = 8471
-# Default Anthropic model; override with --model.
-_DEFAULT_MODEL = "claude-haiku-5-5"
+# Default Anthropic model; override with --model (provider/model spec).
+_DEFAULT_MODEL = "anthropic/claude-haiku-5-5"
+# Providers selectable via the --model prefix.
+_PROVIDERS = ("anthropic", "openai", "local", "stub")
+# Hosted OpenAI endpoint for the openai provider.
+_OPENAI_API_URL = "https://api.openai.com/v1"
 # Default peer system prompt; override with --system-prompt.
 _DEFAULT_SYSTEM_PROMPT = (
     "You are a capable peer coding agent. Answer directly and use the bash "
@@ -54,9 +59,23 @@ def build_default_registry(
     return tools
 
 
+def parse_model_spec(spec: str) -> tuple[str, str]:
+    """Splits a provider/model spec, or raises listing known providers."""
+    if spec == "stub":
+        return "stub", "stub"
+    if "/" in spec:
+        provider, name = spec.split("/", 1)
+        if provider in _PROVIDERS and name:
+            return provider, name
+    raise ValueError(
+        f"Unknown model spec: {spec!r}. Use provider/model with one of: "
+        f"{', '.join(_PROVIDERS)} (e.g. anthropic/claude-opus-5-5, "
+        "local/qwen3 --base-url http://localhost:9931/v1)."
+    )
+
+
 def build_backend(
-    kind: str,
-    model: str,
+    model_spec: str,
     system_prompt: str,
     host_max_tool_turns: int | None = anthropic_backend.DEFAULT_HOST_MAX_TOOL_TURNS,
     max_tokens: int = anthropic_backend.DEFAULT_MAX_TOKENS,
@@ -65,11 +84,23 @@ def build_backend(
     compact_model: str | None = None,
     compact_summary_max_tokens: int = anthropic_backend.DEFAULT_COMPACT_SUMMARY_MAX_TOKENS,
     compact_keep_messages: int = compaction.DEFAULT_KEEP_MESSAGES,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
+    context_window: int | None = None,
 ) -> base.Backend:
-    """Builds a backend by name: anthropic or stub."""
-    if kind == "stub":
+    """Builds a backend from a provider/model spec (see parse_model_spec)."""
+    provider, model = parse_model_spec(model_spec)
+    if provider == "stub":
         return stub_backend.StubBackend()
-    if kind == "anthropic":
+    if compact_model is not None and "/" in compact_model:
+        compact_provider, compact_name = parse_model_spec(compact_model)
+        if compact_provider != provider:
+            raise ValueError(
+                f"Compact model provider {compact_provider!r} differs from "
+                f"main provider {provider!r}."
+            )
+        compact_model = compact_name
+    if provider == "anthropic":
         return anthropic_backend.AnthropicBackend(
             model=model,
             system_prompt=system_prompt,
@@ -80,7 +111,37 @@ def build_backend(
             compact_summary_max_tokens=compact_summary_max_tokens,
             compact_keep_messages=compact_keep_messages,
         )
-    raise ValueError(f"Unknown backend: {kind}")
+    if provider == "openai":
+        return openai_compat_backend.OpenAICompatBackend(
+            model=model,
+            system_prompt=system_prompt,
+            tools=build_default_registry(bash_timeout_s, bash_max_bytes),
+            base_url=_OPENAI_API_URL,
+            api_key_env=api_key_env or "OPENAI_API_KEY",
+            host_max_tool_turns=host_max_tool_turns,
+            max_tokens=max_tokens,
+            context_window=context_window,
+            compact_model=compact_model,
+            compact_summary_max_tokens=compact_summary_max_tokens,
+            compact_keep_messages=compact_keep_messages,
+        )
+    if provider == "local":
+        if not base_url:
+            raise ValueError("The local provider needs --base-url (e.g. http://localhost:9931/v1).")
+        return openai_compat_backend.OpenAICompatBackend(
+            model=model,
+            system_prompt=system_prompt,
+            tools=build_default_registry(bash_timeout_s, bash_max_bytes),
+            base_url=base_url,
+            api_key_env=api_key_env or openai_compat_backend.DEFAULT_KEY_ENV,
+            host_max_tool_turns=host_max_tool_turns,
+            max_tokens=max_tokens,
+            context_window=context_window,
+            compact_model=compact_model,
+            compact_summary_max_tokens=compact_summary_max_tokens,
+            compact_keep_messages=compact_keep_messages,
+        )
+    raise ValueError(f"Unknown backend: {provider}")
 
 
 def build_app(
@@ -214,8 +275,27 @@ def main() -> None:
     """Serves the peer agent over loopback HTTP."""
     parser = argparse.ArgumentParser(description="Peer-agent chat service.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--backend", default="anthropic", choices=["anthropic", "stub"])
-    parser.add_argument("--model", default=_DEFAULT_MODEL)
+    parser.add_argument(
+        "--model",
+        default=_DEFAULT_MODEL,
+        help="provider/model spec (anthropic, openai, local, stub).",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="Endpoint for the local provider (e.g. http://localhost:9931/v1).",
+    )
+    parser.add_argument(
+        "--api-key-env",
+        default=None,
+        help="Env var holding the model API key; overrides the provider default.",
+    )
+    parser.add_argument(
+        "--context-window",
+        type=int,
+        default=None,
+        help="Input budget for providers without a metadata API (local).",
+    )
     parser.add_argument("--system-prompt", default=_DEFAULT_SYSTEM_PROMPT)
     parser.add_argument(
         "--host-max-tool-turns",
@@ -259,7 +339,6 @@ def main() -> None:
     dotenv.load_dotenv(_PROJECT_ROOT / ".env")
     app = build_app(
         build_backend(
-            args.backend,
             args.model,
             args.system_prompt,
             host_max_tool_turns=args.host_max_tool_turns,
@@ -269,6 +348,9 @@ def main() -> None:
             compact_model=args.compact_model,
             compact_summary_max_tokens=args.compact_summary_max_tokens,
             compact_keep_messages=args.compact_keep_messages,
+            base_url=args.base_url,
+            api_key_env=args.api_key_env,
+            context_window=args.context_window,
         ),
         store.ConversationStore(_CONVERSATIONS_DIR),
         event_log.EventLog(_LOGS_DIR, verbose=args.verbose),

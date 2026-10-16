@@ -8,7 +8,7 @@ final `text` with the `conversation_id`.
 ## Quick Start
 
 - `cp .env.example .env` and put your key in `.env`.
-- Start the service from this directory: `python -m service.server --port 8471 --model claude-opus-5-5`.
+- Start the service from this directory: `python -m service.server --port 8471 --model anthropic/claude-opus-5-5`.
 
 - Start any coding agent **from your project directory** (not here).
 - Ask your agent to read the `<abs-path-to-this-repo>/interface/SKILL.md`.
@@ -19,18 +19,25 @@ final `text` with the `conversation_id`.
 ```sh
 cp .env.example .env   # then put your key in .env (git-ignored)
 python -m service.server --port 8471            # default backend: anthropic
-python -m service.server --backend stub --port 8471   # offline smoke test
+python -m service.server --model stub --port 8471   # offline smoke test
 ```
 
 ## Model
 
-Default is `claude-haiku-5-5` (cheapest, so careless runs stay cheap).
-Pick another with `--model`:
+Default is `anthropic/claude-haiku-5-5` (cheapest, so careless runs stay cheap).
+Pick another with `--model provider/model`:
 
 ```sh
-python -m service.server --model claude-sonnet-5-5 --port 8471   # balanced
-python -m service.server --model claude-opus-5-5 --port 8471    # strongest, priciest
+python -m service.server --model anthropic/claude-sonnet-5-5 --port 8471   # balanced
+python -m service.server --model anthropic/claude-opus-5-5 --port 8471    # strongest, priciest
 ```
+
+Providers: `anthropic`, `openai` (hosted), `local` (any OpenAI-dialect
+endpoint — needs `--base-url`, e.g. `http://localhost:9931/v1`), `stub`.
+API keys come from provider env vars (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `LOCAL_MODEL_API_KEY`); `--api-key-env NAME` overrides
+with another variable. Providers without a metadata API take
+`--context-window` for the compaction budget.
 
 The active model is recorded on every `response` line in `logs/`, so a
 mid-thread model switch stays attributable.
