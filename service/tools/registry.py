@@ -57,3 +57,17 @@ class ToolRegistry:
             }
             for tool in self._tools.values()
         ]
+
+    def openai_schemas(self) -> list[dict[str, Any]]:
+        """Renders the registry as OpenAI function-tool parameter dicts."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                },
+            }
+            for tool in self._tools.values()
+        ]

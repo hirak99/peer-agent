@@ -1,7 +1,5 @@
 """Anthropic backend with a server-side tool loop."""
 
-import hashlib
-import json
 import os
 from collections.abc import Iterator
 
@@ -11,6 +9,7 @@ from service import cache_policy
 from service import compaction
 from service import log_events
 from service.backends import base
+from service.backends import tool_loop
 from service.tools import registry
 
 from typing import Any, cast, override
@@ -37,11 +36,10 @@ _OVERFLOW_MARKERS = (
 )
 # After this many consecutive identical (name+input) *failing* calls, hold
 # the next one (do not execute) and ask the model to justify retrying.
-# The hold consumes the streak, so the retry always runs. Successes and
-# different calls reset the streak. Volume alone never holds.
-_HOLD_AFTER_IDENTICAL_FAILURES = 5
+# Shared policy; see service/backends/tool_loop.py.
+_HOLD_AFTER_IDENTICAL_FAILURES = tool_loop.HOLD_AFTER_IDENTICAL_FAILURES
 # Cap on remembered call history; trailing streaks only need the tail.
-_SEEN_HISTORY_CAP = 512
+_SEEN_HISTORY_CAP = tool_loop.SEEN_HISTORY_CAP
 # Prompt-cache breakpoint: prefix content is reused across calls (5-min TTL).
 # Attached to the system prompt, the last tool definition, and the history
 # tail on every request; per-request copies keep stored history clean.
@@ -211,42 +209,7 @@ class AnthropicBackend(base.Backend):
         total: log_events.TokenUsage | None, latest: log_events.TokenUsage | None
     ) -> log_events.TokenUsage | None:
         """Merges per-turn usage: last prompt size, summed generation/cost."""
-        if latest is None:
-            return total
-        if total is None:
-            return latest
-        prompt = (
-            latest.prompt_tokens
-            if latest.prompt_tokens is not None
-            else total.prompt_tokens
-        )
-        completion = (total.completion_tokens or 0) + (latest.completion_tokens or 0)
-        cached = None
-        if (
-            total.cached_prompt_tokens is not None
-            or latest.cached_prompt_tokens is not None
-        ):
-            cached = (total.cached_prompt_tokens or 0) + (
-                latest.cached_prompt_tokens or 0
-            )
-        created = None
-        if (
-            total.cache_creation_input_tokens is not None
-            or latest.cache_creation_input_tokens is not None
-        ):
-            created = (total.cache_creation_input_tokens or 0) + (
-                latest.cache_creation_input_tokens or 0
-            )
-        total_sum = None
-        if total.total_tokens is not None or latest.total_tokens is not None:
-            total_sum = (total.total_tokens or 0) + (latest.total_tokens or 0)
-        return log_events.TokenUsage(
-            prompt_tokens=prompt,
-            completion_tokens=completion,
-            total_tokens=total_sum,
-            cached_prompt_tokens=cached,
-            cache_creation_input_tokens=created,
-        )
+        return tool_loop.accumulate_usage(total, latest)
 
     def _should_cache(self) -> bool:
         """Delegates to the shared recency gate (one decision per request)."""
@@ -314,7 +277,7 @@ class AnthropicBackend(base.Backend):
 
     @staticmethod
     def _call_key(name: str, tool_input: dict[str, Any]) -> str:
-        return f"{name}:{json.dumps(tool_input, sort_keys=True, default=str)}"
+        return tool_loop.call_key(name, tool_input)
 
     def _run_calls(
         self,
@@ -324,72 +287,25 @@ class AnthropicBackend(base.Backend):
         seen: list[tuple[str, bool]],
     ) -> list[dict[str, Any]]:
         """Executes tool_use blocks into Anthropic tool_result blocks."""
-        results: list[dict[str, Any]] = []
-        for call in calls:
-            tool = self._tools.get(call.name)
-            tool_input = dict(call.input) if isinstance(call.input, dict) else {}
-            digest = hashlib.sha256(
-                self._call_key(call.name, tool_input).encode()
-            ).hexdigest()
-            trailing = 0
-            for prior_digest, prior_failed in reversed(seen):
-                if prior_digest != digest or not prior_failed:
-                    break
-                trailing += 1
-            if trailing >= _HOLD_AFTER_IDENTICAL_FAILURES:
-                reason = f"held: identical call failed {trailing} times in a row"
-                output = (
-                    f"Held: this exact `{call.name}` call failed {trailing} "
-                    "times in a row, so it was not run. Write a sentence to "
-                    "yourself about why retrying could help, then retry if "
-                    "you still want to."
-                )
-                del seen[len(seen) - trailing :]
-                seen.append((digest, False))
-                tool_events.append(
-                    base.ToolEvent(
-                        name=call.name,
-                        tool_input=tool_input,
-                        output=output,
-                        failure_reason=reason,
-                    )
-                )
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call.id,
-                        "content": output,
-                        "is_error": True,
-                    }
-                )
-                continue
-            if tool is None:
-                result = registry.ToolResult(
-                    output=f"<unknown tool: {call.name}>",
-                    failure_reason="unknown tool",
-                )
-            else:
-                result = tool.handler(tool_input, context)
-            seen.append((digest, result.failure_reason is not None))
-            if len(seen) > _SEEN_HISTORY_CAP:
-                del seen[:-_SEEN_HISTORY_CAP]
-            tool_events.append(
-                base.ToolEvent(
-                    name=call.name,
-                    tool_input=tool_input,
-                    output=result.output,
-                    failure_reason=result.failure_reason,
-                )
+        triples = [
+            (
+                call.id,
+                call.name,
+                dict(call.input) if isinstance(call.input, dict) else {},
             )
-            results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": call.id,
-                    "content": result.output,
-                    "is_error": result.failure_reason is not None,
-                }
+            for call in calls
+        ]
+        return [
+            {
+                "type": "tool_result",
+                "tool_use_id": call_id,
+                "content": output,
+                "is_error": is_error,
+            }
+            for call_id, _name, output, is_error in tool_loop.execute_calls(
+                self._tools, triples, tool_events, context, seen
             )
-        return results
+        ]
 
     def _yield_completion(
         self,
