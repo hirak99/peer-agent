@@ -188,9 +188,9 @@ class OpenAICompatBackend(base.Backend):
         return params
 
     def _extra_params(self, context: base.ToolContext) -> dict[str, Any]:
-        if context.workdir is None:
-            return {}
-        schemas = self._tools.openai_schemas()
+        schemas = self._tools.openai_schemas(
+            include_workdir_tools=context.workdir is not None
+        )
         if not schemas:
             return {}
         return {"tools": schemas}

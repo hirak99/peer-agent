@@ -265,9 +265,11 @@ class AnthropicBackend(base.Backend):
         with_tools: bool = True,
         use_cache: bool = True,
     ) -> dict[str, Any]:
-        if not with_tools or context.workdir is None:
+        if not with_tools:
             return {}
-        schemas = self._tools.anthropic_schemas()
+        schemas = self._tools.anthropic_schemas(
+            include_workdir_tools=context.workdir is not None
+        )
         if not schemas:
             return {}
         copied = [dict(schema) for schema in schemas]

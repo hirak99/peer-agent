@@ -125,4 +125,5 @@ def build_web_fetch_tool(
             "required": ["url"],
         },
         handler=_handle,
+        requires_workdir=False,
     )

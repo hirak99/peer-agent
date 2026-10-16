@@ -5,6 +5,7 @@ import threading
 import time
 from http import server as http_server
 
+from service import server
 from service.backends import base
 from service.tools import web_fetch_tool
 
@@ -156,3 +157,27 @@ def test_timeout_reports_failure_reason() -> None:
         httpd.shutdown()
     assert result.failure_reason is not None
     assert "timed out" in result.failure_reason
+
+
+def test_null_cwd_filter_keeps_only_web_fetch() -> None:
+    """Null-cwd turns withhold filesystem tools but keep web_fetch."""
+    tools = server.build_default_registry()
+    openai_names = [
+        entry["function"]["name"]
+        for entry in tools.openai_schemas(include_workdir_tools=False)
+    ]
+    assert openai_names == ["web_fetch"]
+    anthropic_names = [
+        entry["name"] for entry in tools.anthropic_schemas(include_workdir_tools=False)
+    ]
+    assert anthropic_names == ["web_fetch"]
+
+
+def test_workdir_filter_keeps_all_tools() -> None:
+    """Workdir turns still offer the full registry."""
+    tools = server.build_default_registry()
+    openai_names = sorted(
+        entry["function"]["name"]
+        for entry in tools.openai_schemas(include_workdir_tools=True)
+    )
+    assert openai_names == ["bash", "edit", "read", "web_fetch"]

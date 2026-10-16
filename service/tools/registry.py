@@ -31,6 +31,9 @@ class Tool:
     input_schema: dict[str, Any]
     # Handler mapping decoded input and turn context to a result.
     handler: Callable[[dict[str, Any], base.ToolContext], ToolResult]
+    # Whether the tool needs a workdir; False means it stays offered
+    # on null-cwd turns where filesystem tools are withheld.
+    requires_workdir: bool = True
 
 
 class ToolRegistry:
@@ -47,7 +50,19 @@ class ToolRegistry:
         """Looks up a tool by name, or None when unregistered."""
         return self._tools.get(name)
 
-    def anthropic_schemas(self) -> list[dict[str, Any]]:
+    def available(self, include_workdir_tools: bool = True) -> list[Tool]:
+        """Lists tools filtered for the turn context.
+
+        Null-cwd turns pass False, withholding filesystem tools while
+        keeping workdir-independent ones (e.g. web_fetch).
+        """
+        if include_workdir_tools:
+            return list(self._tools.values())
+        return [tool for tool in self._tools.values() if not tool.requires_workdir]
+
+    def anthropic_schemas(
+        self, include_workdir_tools: bool = True
+    ) -> list[dict[str, Any]]:
         """Renders the registry as Anthropic tool parameter dicts."""
         return [
             {
@@ -55,10 +70,12 @@ class ToolRegistry:
                 "description": tool.description,
                 "input_schema": tool.input_schema,
             }
-            for tool in self._tools.values()
+            for tool in self.available(include_workdir_tools)
         ]
 
-    def openai_schemas(self) -> list[dict[str, Any]]:
+    def openai_schemas(
+        self, include_workdir_tools: bool = True
+    ) -> list[dict[str, Any]]:
         """Renders the registry as OpenAI function-tool parameter dicts."""
         return [
             {
@@ -69,5 +86,5 @@ class ToolRegistry:
                     "parameters": tool.input_schema,
                 },
             }
-            for tool in self._tools.values()
+            for tool in self.available(include_workdir_tools)
         ]
