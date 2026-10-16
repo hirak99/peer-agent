@@ -39,9 +39,9 @@ _OPENAI_API_URL = "https://api.openai.com/v1"
 # Default peer system prompt; override with --system-prompt.
 _DEFAULT_SYSTEM_PROMPT = (
     "You are a capable peer coding agent. Answer directly and use the bash "
-    "tool when running commands helps. Keep replies concise. Only invoke "
-    "tools actually offered to you; when no tools are offered, say what you "
-    "cannot do instead of emitting fake tool calls or guessed outputs."
+    "tool when running commands helps. Only invoke tools listed in the "
+    "available tools; if none matches what you need, say so instead of "
+    "emitting a plausible-looking call or inventing its result."
 )
 # Project-root-relative state directories.
 _PROJECT_ROOT = pathlib.Path(__file__).resolve().parent.parent
