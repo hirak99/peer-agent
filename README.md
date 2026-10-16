@@ -55,7 +55,7 @@ python -m service.server --model local/qwen3:32b --base-url http://localhost:114
 ```
 `--compact-in-context` compacts via a transient in-context turn (warm KV
 cache) with fallback to a separate summarize call — see
-`docs/compaction.md`. Omit it for the default new-thread path.
+[docs/compaction.md](docs/compaction.md). Omit it for the default new-thread path.
 
 Providers: `anthropic`, `openai` (hosted), `local` (any OpenAI-dialect
 endpoint — needs `--base-url`, e.g. `http://localhost:9931/v1`), `stub`.
@@ -75,8 +75,8 @@ Every request marks ephemeral cache breakpoints on the system prompt, the
 last tool definition, and the history tail, so repeated history is served
 from cache (5-min TTL) instead of rebilled. Breakpoints attach by default and
 suspend only after `n = _CACHE_IDLE_DISABLE_AFTER` (in
-`service/backends/anthropic_backend.py`) consecutive gaps over 5 minutes.
-See `docs/prompt-caching.md` for pricing, the breakeven derivation, and the
+[service/backends/anthropic_backend.py](service/backends/anthropic_backend.py)) consecutive gaps over 5 minutes.
+See [docs/prompt-caching.md](docs/prompt-caching.md) for pricing, the breakeven derivation, and the
 keepalive-vs-1h analysis.
 
 Watch `cached_prompt_tokens` vs `cache_creation_input_tokens` on `response`
@@ -113,14 +113,14 @@ compactions are logged as `compaction` events. Per-turn override:
 --conversation-id <id> --port 8471`). On context-overflow the turn
 retries once after compaction instead of failing. Slow-prefill local
 models should pass `--compact-in-context` (warm-cache summaries, silent
-fallback). See `docs/compaction.md` for paths, trade-offs, and all knobs.
+fallback). See [docs/compaction.md](docs/compaction.md) for paths, trade-offs, and all knobs.
 Server knobs:
 `--compact-model` (e.g. haiku for cheap summaries), `--compact-summary-max-tokens`,
 `--compact-context-window`, `--compact-in-context`.
 
 ## Skill (Option A)
 
-See `interface/SKILL.md` for the plain-HTTP instructions any agent can follow.
+See [interface/SKILL.md](interface/SKILL.md) for the plain-HTTP instructions any agent can follow.
 
 ## MCP (Option B)
 
@@ -130,7 +130,7 @@ Stdio wrapper over the same HTTP service:
 python interface/mcp_server.py --port 8471
 ```
 
-opencode project config (`opencode.jsonc`). Use absolute paths — the wrapper
+opencode project config ([opencode.jsonc](opencode.jsonc)). Use absolute paths — the wrapper
 runs from the host agent's project directory, not from here:
 
 ```jsonc
@@ -144,20 +144,20 @@ This exposes a `peer_chat(prompt, conversation_id?, cwd?)` tool.
 
 ## Host instructions
 
-See `docs/host-instruction-examples.md` for copy-pasteable coordination
+See [docs/host-instruction-examples.md](docs/host-instruction-examples.md) for copy-pasteable coordination
 prompts: a capable host working with a stronger peer reviewer, or a
 strong host delegating narrow subtasks to a weaker peer executor.
 
 ## Layout
 
-- `service/server.py` — FastAPI app: `POST /chat`, `POST /chat/stream`, `POST /compact`, `GET /health`
-- `service/compaction.py` — margin trigger, tool-pair-safe split, summary helpers
-- `service/in_context_compaction.py` — warm-cache path (`--compact-in-context`)
-- `service/backends/` — `base.py` interface, `anthropic_backend.py`, `stub_backend.py`
-- `service/tools/` — `registry.py` (open for new tools), `bash_tool.py`, `read_tool.py`, `edit_tool.py`
-- `service/store.py`, `service/event_log.py` — `conversations/*.json`, `logs/*.jsonl`
-- `client/chat.py`, `interface/mcp_server.py`
+- [service/server.py](service/server.py) — FastAPI app: `POST /chat`, `POST /chat/stream`, `POST /compact`, `GET /health`
+- [service/compaction.py](service/compaction.py) — margin trigger, tool-pair-safe split, summary helpers
+- [service/in_context_compaction.py](service/in_context_compaction.py) — warm-cache path (`--compact-in-context`)
+- [service/backends/](service/backends/) — [base.py](service/backends/base.py) interface, [anthropic_backend.py](service/backends/anthropic_backend.py), [stub_backend.py](service/backends/stub_backend.py)
+- [service/tools/](service/tools/) — [registry.py](service/tools/registry.py) (open for new tools), [bash_tool.py](service/tools/bash_tool.py), [read_tool.py](service/tools/read_tool.py), [edit_tool.py](service/tools/edit_tool.py)
+- [service/store.py](service/store.py), [service/event_log.py](service/event_log.py) — `conversations/*.json`, `logs/*.jsonl`
+- [client/chat.py](client/chat.py), [interface/mcp_server.py](interface/mcp_server.py)
 
 ## License
 
-Apache-2.0, Copyright 2026 Arnab Bose. See `LICENSE`.
+Apache-2.0, Copyright 2026 Arnab Bose. See [LICENSE](LICENSE).
