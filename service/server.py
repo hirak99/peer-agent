@@ -17,6 +17,7 @@ from service import models
 from service import store
 from service.backends import anthropic_backend
 from service.backends import base
+from service.backends import openai_cloud_backend
 from service.backends import openai_compat_backend
 from service.backends import stub_backend
 from service.tools import bash_tool
@@ -116,7 +117,7 @@ def build_backend(
             compact_keep_messages=compact_keep_messages,
         )
     if provider == "openai":
-        return openai_compat_backend.OpenAICompatBackend(
+        return openai_cloud_backend.OpenAICloudBackend(
             model=model,
             system_prompt=system_prompt,
             tools=build_default_registry(bash_timeout_s, bash_max_bytes),

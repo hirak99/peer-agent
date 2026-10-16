@@ -25,11 +25,19 @@ python -m service.server --model stub --port 8471   # offline smoke test
 ## Model
 
 Default is `anthropic/claude-haiku-5-5` (cheapest, so careless runs stay cheap).
-Pick another with `--model provider/model`:
+Pick another with `--model provider/model` (model names as of Oct 2026):
 
 ```sh
+python -m service.server --model anthropic/claude-haiku-5-5 --port 8471    # cheap testing
 python -m service.server --model anthropic/claude-sonnet-5-5 --port 8471   # balanced
 python -m service.server --model anthropic/claude-opus-5-5 --port 8471    # strongest, priciest
+```
+
+Hosted OpenAI (model names as of Oct 2026):
+
+```sh
+python -m service.server --model openai/gpt-4.1-nano --port 8471   # cheap testing
+python -m service.server --model openai/gpt-5.4 --port 8471        # frontier
 ```
 
 Local OpenAI-dialect endpoint (llama.cpp, vLLM, Ollama):

@@ -88,3 +88,20 @@ Revisit if `logs/` show many resumes landing in the 5–60min
 band. Cheaper first step than keepalives: selective `ttl: "1h"`
 on the stable system/tools prefix with the volatile tail at
 5 minutes (longer TTLs must come first).
+
+## OpenAI cloud (GPT-5.6+)
+
+Same shape, different constants: 1.25x writes, 0.1x reads
+(`h = 0.25/1.15 ~= 0.217`), 30-minute floor, minimum 1024 tokens
+per breakpoint. The `openai` provider sends explicit mode
+(`prompt_cache_options: {mode: explicit, ttl: 30m}`) with one
+breakpoint after the system prefix and a stable `prompt_cache_key`,
+gated by the same recency policy with a 30-minute window. Only
+5.6+ model names take these options — earlier models 400 them,
+so the backend sends those requests plain (their implicit
+caching has no write charge and is already optimal). Wire
+shapes were validated live: breakpoint field is
+`prompt_cache_breakpoint: {mode: explicit}` on the content part.
+Our system prompt alone (~60 tokens) is under the 1024 minimum,
+so short threads may write nothing until tools/history lengthen
+the prefix.
