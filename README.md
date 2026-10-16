@@ -44,11 +44,14 @@ Local OpenAI-dialect endpoint (llama.cpp, vLLM, Ollama):
 
 ```sh
 python -m service.server --model local --base-url http://localhost:9931/v1 \
-  --context-window 150000 --port 8472
+  --context-window 150000 --compact-in-context --port 8472
 # multi-model servers (Ollama, vLLM): select with an id, e.g.
 python -m service.server --model local/qwen3:32b --base-url http://localhost:11434/v1 \
-  --context-window 131072 --port 8472
+  --context-window 131072 --compact-in-context --port 8472
 ```
+`--compact-in-context` compacts via a transient in-context turn (warm KV
+cache) with fallback to a separate summarize call — see
+`docs/compaction.md`. Omit it for the default new-thread path.
 
 Providers: `anthropic`, `openai` (hosted), `local` (any OpenAI-dialect
 endpoint — needs `--base-url`, e.g. `http://localhost:9931/v1`), `stub`.
@@ -104,9 +107,12 @@ compactions are logged as `compaction` events. Per-turn override:
 `{"compact": true/false}`. Manual, no model turn: `POST /compact
 {"conversation_id": "..."}` (CLI: `python client/chat.py "/compact"
 --conversation-id <id> --port 8471`). On context-overflow the turn
-retries once after compaction instead of failing. Server knobs:
+retries once after compaction instead of failing. Slow-prefill local
+models should pass `--compact-in-context` (warm-cache summaries, silent
+fallback). See `docs/compaction.md` for paths, trade-offs, and all knobs.
+Server knobs:
 `--compact-model` (e.g. haiku for cheap summaries), `--compact-summary-max-tokens`,
-`--compact-context-window`.
+`--compact-context-window`, `--compact-in-context`.
 
 ## Skill (Option A)
 
@@ -136,6 +142,7 @@ This exposes a `peer_chat(prompt, conversation_id?, cwd?)` tool.
 
 - `service/server.py` — FastAPI app: `POST /chat`, `POST /chat/stream`, `POST /compact`, `GET /health`
 - `service/compaction.py` — margin trigger, tool-pair-safe split, summary helpers
+- `service/in_context_compaction.py` — warm-cache path (`--compact-in-context`)
 - `service/backends/` — `base.py` interface, `anthropic_backend.py`, `stub_backend.py`
 - `service/tools/` — `registry.py` (open for new tools), `bash_tool.py`, `read_tool.py`, `edit_tool.py`
 - `service/store.py`, `service/event_log.py` — `conversations/*.json`, `logs/*.jsonl`
