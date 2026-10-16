@@ -46,19 +46,11 @@ _SEEN_HISTORY_CAP = 512
 # Attached to the system prompt, the last tool definition, and the history
 # tail on every request; per-request copies keep stored history clean.
 _CACHE_BREAKPOINT: dict[str, str] = {"type": "ephemeral"}
-# Anthropic cache pricing ($/MTok, standard global tier, Oct 2026):
-#                    Nocache 5m-Cached 1h-Cached Cached
-#   Model            Write   Write     Write     Read    Output
-#   Opus 5.5         4.00    5.00      8.00      0.20    20.00
-#   Sonnet 5.5       2.00    2.50      4.00      0.10    10.00
-#   Haiku 5.5 <=100k 0.10    0.125     0.20      0.01    0.50
-#   Haiku 5.5 >100k  0.50    0.625     1.00      0.05    2.50
-# (Haiku tier counts the full prompt incl. cache reads/writes.)
 # NOTE: both constants below mirror Anthropic's current ephemeral-cache
 # terms (5-min TTL; breakeven 0.2083 from 1.25x writes / 0.05x reads).
 # Revisit them if Anthropic changes its TTL or cache pricing multipliers.
-# See README.md ("Prompt caching") for the breakeven derivation, which
-# applies generally beyond these Anthropic-specific numbers.
+# See docs/prompt-caching.md for pricing and the breakeven derivation,
+# which applies generally beyond these Anthropic-specific numbers.
 # Freshness window tracking the ephemeral-cache TTL: gaps inside it
 # guarantee a live cache.
 _CACHE_FRESHNESS_WINDOW_S = 5 * 60

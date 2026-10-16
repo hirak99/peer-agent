@@ -41,19 +41,11 @@ last tool definition, and the history tail, so repeated history is served
 from cache (5-min TTL) instead of rebilled. Breakpoints attach by default and
 suspend only after `n = _CACHE_IDLE_DISABLE_AFTER` (in
 `service/backends/anthropic_backend.py`) consecutive gaps over 5 minutes.
-
-Breakeven occurs at probability of cache hit h, then -
-($/Write - $/CacheRead) h = ($/CachedWrite - $/Write) (1 - h)
-=> h = ($/CachedWrite - $/Write) / ($/CachedWrite - $/CacheRead)
-
-Ideally we need to tune so that `n` number of misses implies
-prob(next hit) < h.
+See `docs/prompt-caching.md` for pricing, the breakeven derivation, and the
+keepalive-vs-1h analysis.
 
 Watch `cached_prompt_tokens` vs `cache_creation_input_tokens` on `response`
 lines in `logs/`.
-
-Example: For Anthropic, breakeven h = 1 / 4.8 = 0.2083, and we can set `n` = 3 if
-we feel after 3 misses, P(next hit) < 0.2083.
 
 
 ## Chat
