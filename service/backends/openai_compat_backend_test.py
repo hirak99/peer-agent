@@ -8,6 +8,8 @@ from service.tools import registry
 
 from typing import Any
 
+# pyright: reportPrivateUsage=false
+
 
 def _backend() -> openai_compat_backend.OpenAICompatBackend:
     """Builds a backend with one fake tool, bypassing endpoint validation."""

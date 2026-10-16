@@ -17,7 +17,7 @@ from service import log_events
 from service.backends import base
 from service.backends import openai_compat_backend
 
-from typing import Any, override
+from typing import Any, cast, override
 
 # Freshness window tracking the 30-minute cache floor: gaps inside it
 # guarantee a live cache. Breakeven h = 0.25/1.15 ~= 0.217.
@@ -107,7 +107,7 @@ class OpenAICloudBackend(openai_compat_backend.OpenAICompatBackend):
         return self._client.chat.completions.create(
             model=self._model,
             max_completion_tokens=self._max_tokens,
-            messages=self._chat_messages(messages),
+            messages=cast(Any, self._chat_messages(messages)),
             extra_body=self._cache_options() or None,
             **self._extra_params(context),
         )
@@ -156,7 +156,7 @@ class OpenAICloudBackend(openai_compat_backend.OpenAICompatBackend):
                 *trimmed,
                 {"role": "user", "content": "Write the handoff summary now."},
             ]
-        params = self._chat_messages(summarizer_messages)
+        params = cast(Any, self._chat_messages(summarizer_messages))
         params[0] = {"role": "system", "content": compaction.SUMMARY_SYSTEM_PROMPT}
         response = self._client.chat.completions.create(
             model=self._compact_model,

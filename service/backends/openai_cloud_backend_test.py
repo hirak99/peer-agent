@@ -7,6 +7,8 @@ from service.backends import openai_cloud_backend
 
 from typing import Any
 
+# pyright: reportPrivateUsage=false
+
 
 class _FakeCompletions:
     def __init__(self) -> None:
