@@ -15,7 +15,8 @@ class ChatRequest(pydantic.BaseModel):
     # Existing conversation to continue. Omitted to start a new one.
     conversation_id: str | None = None
     # Host working directory for tool execution. Required; null withholds
-    # filesystem tools (bash) for this turn.
+    # filesystem tools (bash/read/edit) for this turn, keeping
+    # workdir-independent tools (web_fetch).
     cwd: str | None
     # Host-controlled tool-turn budget for this reply. None (default) means
     # unlimited. Set an int to make the server yield with
