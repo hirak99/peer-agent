@@ -1,9 +1,13 @@
 # Peer Agent
 
-Stateful peer-agent service. A host agent sends a `prompt` (plus an optional
-`conversation_id`); the service holds history server-side, runs the model
-(Anthropic by default) with a server-side `bash` tool loop, and returns the
-final `text` with the `conversation_id`.
+Meant to be used by agents from any harness: delegate execution to a cheaper
+agent to save tokens, have a weaker agent execute while a stronger peer validates
+its plans, or let two agents challenge, verify, and cross-check each other's ideas.
+
+Peer Agent is a stateful model harness. A host agent sends a `prompt` (plus an optional
+`conversation_id`); the service holds history server-side and runs it on Anthropic,
+hosted OpenAI, or local OpenAI-dialect models with server-side read/bash/edit tools,
+prompt caching, live tool logging, and automatic compaction.
 
 ## Quick Start
 
