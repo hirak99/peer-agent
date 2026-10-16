@@ -24,6 +24,7 @@ from service.tools import bash_tool
 from service.tools import edit_tool
 from service.tools import read_tool
 from service.tools import registry
+from service.tools import web_fetch_tool
 
 from typing import Any
 
@@ -51,12 +52,15 @@ _LOGS_DIR = _PROJECT_ROOT / "logs"
 def build_default_registry(
     timeout_s: int = bash_tool.DEFAULT_BASH_TIMEOUT_S,
     max_bytes: int = bash_tool.DEFAULT_BASH_MAX_BYTES,
+    web_timeout_s: int = web_fetch_tool.DEFAULT_WEB_TIMEOUT_S,
+    web_max_bytes: int = web_fetch_tool.DEFAULT_WEB_MAX_BYTES,
 ) -> registry.ToolRegistry:
     """Builds the tool registry served to the peer agent."""
     tools = registry.ToolRegistry()
     tools.register(bash_tool.build_bash_tool(timeout_s, max_bytes))
     tools.register(read_tool.build_read_tool(max_bytes=max_bytes))
     tools.register(edit_tool.build_edit_tool())
+    tools.register(web_fetch_tool.build_web_fetch_tool(web_timeout_s, web_max_bytes))
     return tools
 
 
@@ -86,6 +90,8 @@ def build_backend(
     max_tokens: int = anthropic_backend.DEFAULT_MAX_TOKENS,
     bash_timeout_s: int = bash_tool.DEFAULT_BASH_TIMEOUT_S,
     bash_max_bytes: int = bash_tool.DEFAULT_BASH_MAX_BYTES,
+    web_timeout_s: int = web_fetch_tool.DEFAULT_WEB_TIMEOUT_S,
+    web_max_bytes: int = web_fetch_tool.DEFAULT_WEB_MAX_BYTES,
     compact_model: str | None = None,
     compact_summary_max_tokens: int = anthropic_backend.DEFAULT_COMPACT_SUMMARY_MAX_TOKENS,
     compact_keep_messages: int = compaction.DEFAULT_KEEP_MESSAGES,
@@ -109,7 +115,9 @@ def build_backend(
         return anthropic_backend.AnthropicBackend(
             model=model,
             system_prompt=system_prompt,
-            tools=build_default_registry(bash_timeout_s, bash_max_bytes),
+            tools=build_default_registry(
+                bash_timeout_s, bash_max_bytes, web_timeout_s, web_max_bytes
+            ),
             host_max_tool_turns=host_max_tool_turns,
             max_tokens=max_tokens,
             compact_model=compact_model,
@@ -120,7 +128,9 @@ def build_backend(
         return openai_cloud_backend.OpenAICloudBackend(
             model=model,
             system_prompt=system_prompt,
-            tools=build_default_registry(bash_timeout_s, bash_max_bytes),
+            tools=build_default_registry(
+                bash_timeout_s, bash_max_bytes, web_timeout_s, web_max_bytes
+            ),
             base_url=_OPENAI_API_URL,
             api_key_env=api_key_env or "OPENAI_API_KEY",
             host_max_tool_turns=host_max_tool_turns,
@@ -136,7 +146,9 @@ def build_backend(
         return openai_compat_backend.OpenAICompatBackend(
             model=model,
             system_prompt=system_prompt,
-            tools=build_default_registry(bash_timeout_s, bash_max_bytes),
+            tools=build_default_registry(
+                bash_timeout_s, bash_max_bytes, web_timeout_s, web_max_bytes
+            ),
             base_url=base_url,
             api_key_env=api_key_env or openai_compat_backend.DEFAULT_KEY_ENV,
             host_max_tool_turns=host_max_tool_turns,
@@ -326,6 +338,12 @@ def main() -> None:
         "--bash-max-bytes", type=int, default=bash_tool.DEFAULT_BASH_MAX_BYTES
     )
     parser.add_argument(
+        "--web-timeout", type=int, default=web_fetch_tool.DEFAULT_WEB_TIMEOUT_S
+    )
+    parser.add_argument(
+        "--web-max-bytes", type=int, default=web_fetch_tool.DEFAULT_WEB_MAX_BYTES
+    )
+    parser.add_argument(
         "--compact-margin-tokens",
         type=int,
         default=compaction.DEFAULT_MARGIN_TOKENS,
@@ -365,6 +383,8 @@ def main() -> None:
             max_tokens=args.max_tokens,
             bash_timeout_s=args.bash_timeout,
             bash_max_bytes=args.bash_max_bytes,
+            web_timeout_s=args.web_timeout,
+            web_max_bytes=args.web_max_bytes,
             compact_model=args.compact_model,
             compact_summary_max_tokens=args.compact_summary_max_tokens,
             compact_keep_messages=args.compact_keep_messages,
