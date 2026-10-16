@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+import json
 import pathlib
 
 from fastapi import testclient
@@ -14,7 +15,7 @@ from service import server
 from service import store
 from service.backends import stub_backend
 
-from typing import Any
+from typing import Any, override
 
 
 def test_split_keeps_tool_pairs_intact() -> None:
@@ -212,3 +213,97 @@ def test_manual_compact_endpoint(tmp_path: pathlib.Path) -> None:
     assert client.post("/compact", json={"conversation_id": "nope"}).status_code == 404
     assert chat_turn.compact_conversation is not None
     assert log_events.CompactionEvent is not None
+
+
+class _TruncatingBackend(stub_backend.StubBackend):
+    """summarize() always hits its output budget."""
+
+    @override
+    def summarize(self, messages: list[dict[str, Any]]) -> str:
+        raise compaction.SummaryTruncatedError(
+            "Summary truncated at the test budget; compaction refused."
+        )
+
+
+class _EmptySummaryBackend(stub_backend.StubBackend):
+    """summarize() returns blank text."""
+
+    @override
+    def summarize(self, messages: list[dict[str, Any]]) -> str:
+        return "   "
+
+
+def _tiny_window_client(
+    tmp_path: pathlib.Path, backend: Any
+) -> tuple[testclient.TestClient, store.ConversationStore]:
+    """App whose next turn exceeds its input window, forcing compaction."""
+    conversations = store.ConversationStore(tmp_path / "conversations")
+    events = event_log.EventLog(tmp_path / "logs")
+    config = compaction.CompactionConfig(
+        margin_tokens=0, keep_messages=2, context_window_override=10
+    )
+    app = server.build_app(
+        backend, conversations, events, "sys", compaction_config=config
+    )
+    return testclient.TestClient(app), conversations
+
+
+def test_proactive_refuses_truncated_summary(tmp_path: pathlib.Path) -> None:
+    """A budget-hit summary leaves history untouched; the turn still succeeds."""
+    client, conversations = _tiny_window_client(tmp_path, _TruncatingBackend())
+    first: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
+    ).json()
+    second: dict[str, Any] = client.post(
+        "/chat",
+        json={
+            "prompt": "two",
+            "conversation_id": first["conversation_id"],
+            "cwd": str(tmp_path),
+        },
+    ).json()
+    assert second["conversation_id"] == first["conversation_id"]
+    saved = conversations.load(first["conversation_id"])
+    assert "[Conversation summary" not in json.dumps(saved)
+
+
+def test_proactive_refuses_empty_summary(tmp_path: pathlib.Path) -> None:
+    """A blank summary is never spliced into history."""
+    client, conversations = _tiny_window_client(tmp_path, _EmptySummaryBackend())
+    first: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
+    ).json()
+    client.post(
+        "/chat",
+        json={
+            "prompt": "two",
+            "conversation_id": first["conversation_id"],
+            "cwd": str(tmp_path),
+        },
+    )
+    saved = conversations.load(first["conversation_id"])
+    assert "[Conversation summary" not in json.dumps(saved)
+
+
+def test_manual_compact_fails_on_truncated_summary(tmp_path: pathlib.Path) -> None:
+    """POST /compact surfaces truncation as a 502 and saves nothing."""
+    conversations = store.ConversationStore(tmp_path / "conversations")
+    events = event_log.EventLog(tmp_path / "logs")
+    backend = _TruncatingBackend()
+    app = server.build_app(
+        backend,
+        conversations,
+        events,
+        "sys",
+        compaction_config=compaction.CompactionConfig(keep_messages=2),
+    )
+    client = testclient.TestClient(app, raise_server_exceptions=False)
+    first: dict[str, Any] = client.post(
+        "/chat", json={"prompt": "one", "cwd": str(tmp_path)}
+    ).json()
+    cid = first["conversation_id"]
+    client.post("/chat", json={"prompt": "two", "conversation_id": cid, "cwd": str(tmp_path)})
+    before = conversations.load(cid)
+    response = client.post("/compact", json={"conversation_id": cid})
+    assert response.status_code == 502
+    assert conversations.load(cid) == before

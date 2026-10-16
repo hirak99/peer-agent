@@ -35,7 +35,7 @@ DEFAULT_HOST_MAX_TOOL_TURNS: int | None = None
 # for the reply text, not the thinking.
 DEFAULT_MAX_TOKENS = 8192
 # Default token budget for the compaction summary reply.
-DEFAULT_COMPACT_SUMMARY_MAX_TOKENS = 2000
+DEFAULT_COMPACT_SUMMARY_MAX_TOKENS = 8000
 # Substrings marking a rejected call as context overflow (not other 400s).
 _OVERFLOW_MARKERS = (
     "too long",
@@ -222,6 +222,19 @@ class OpenAICompatBackend(base.Backend):
         return text, calls, reasoning
 
     @staticmethod
+    def _finish_reason(response: Any) -> str | None:
+        """Returns the first choice's finish reason, or None when absent."""
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return None
+        return getattr(choices[0], "finish_reason", None)
+
+    @staticmethod
+    def _is_truncated(response: Any) -> bool:
+        """Reports whether the reply was cut by the output budget."""
+        return OpenAICompatBackend._finish_reason(response) == "length"
+
+    @staticmethod
     def _to_token_usage(usage: Any) -> log_events.TokenUsage:
         prompt_tokens: int | None = getattr(usage, "prompt_tokens", None)
         completion_tokens: int | None = getattr(usage, "completion_tokens", None)
@@ -257,7 +270,12 @@ class OpenAICompatBackend(base.Backend):
 
     @override
     def summarize(self, messages: list[dict[str, Any]]) -> str:
-        """Distills history into a handoff summary with tools disabled."""
+        """Distills history into a handoff summary with tools disabled.
+
+        Raises compaction.SummaryTruncatedError when the reply exhausts
+        its output budget: callers must refuse compaction rather than
+        persist a cut-off handoff.
+        """
         trimmed = compaction.truncate_for_summary(messages)
         if not trimmed:
             return ""
@@ -282,6 +300,12 @@ class OpenAICompatBackend(base.Backend):
             max_tokens=self._compact_summary_max_tokens,
             messages=params,
         )
+        if self._is_truncated(response):
+            raise compaction.SummaryTruncatedError(
+                f"Summary truncated at the {self._compact_summary_max_tokens}-token "
+                f"budget (model {self._compact_model}); compaction refused. Raise "
+                "--compact-summary-max-tokens and retry."
+            )
         return (getattr(response.choices[0].message, "content", None) or "").strip()
 
     def _compact_for_recovery(
@@ -335,6 +359,7 @@ class OpenAICompatBackend(base.Backend):
             hint=hint,
             tool_turns=tool_turns,
             reasoning=turn_reasoning,
+            truncated=self._is_truncated(response),
         )
 
     def _store_assistant_turn(
@@ -437,6 +462,7 @@ class OpenAICompatBackend(base.Backend):
                     tool_turns=tool_turns,
                     compaction=recovered,
                     reasoning="\n\n".join(reasoning_parts).strip(),
+                    truncated=self._is_truncated(response),
                 )
             if text:
                 text_prefix = (

@@ -43,5 +43,7 @@ def attempt_summary(
         return None
     finally:
         del history[pre_len:]
+    if getattr(completion, "truncated", False):
+        return None
     summary = completion.text.strip()
     return summary or None

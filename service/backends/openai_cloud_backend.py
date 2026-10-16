@@ -138,7 +138,12 @@ class OpenAICloudBackend(openai_compat_backend.OpenAICompatBackend):
 
     @override
     def summarize(self, messages: list[dict[str, Any]]) -> str:
-        """Distills history into a handoff summary with tools disabled."""
+        """Distills history into a handoff summary with tools disabled.
+
+        Raises compaction.SummaryTruncatedError when the reply exhausts
+        its output budget: callers must refuse compaction rather than
+        persist a cut-off handoff.
+        """
         trimmed = compaction.truncate_for_summary(messages)
         if not trimmed:
             return ""
@@ -163,4 +168,10 @@ class OpenAICloudBackend(openai_compat_backend.OpenAICompatBackend):
             max_completion_tokens=self._compact_summary_max_tokens,
             messages=params,
         )
+        if self._is_truncated(response):
+            raise compaction.SummaryTruncatedError(
+                f"Summary truncated at the {self._compact_summary_max_tokens}-token "
+                f"budget (model {self._compact_model}); compaction refused. Raise "
+                "--compact-summary-max-tokens and retry."
+            )
         return (getattr(response.choices[0].message, "content", None) or "").strip()

@@ -103,6 +103,35 @@ def test_attempt_summary_rejects_empty_reply() -> None:
     assert history == _history()
 
 
+class _TruncatedReplyBackend(stub_backend.StubBackend):
+    """complete() succeeds but flags the reply as budget-truncated."""
+
+    @override
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        context: base.ToolContext,
+        host_max_tool_turns: int | None = None,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
+    ) -> base.Completion:
+        messages.append({"role": "assistant", "content": "cut-off partial"})
+        return base.Completion(
+            text="cut-off partial", usage=None, tool_events=[], truncated=True
+        )
+
+
+def test_attempt_summary_rejects_truncated_reply() -> None:
+    """Budget-cut replies fall back instead of splicing a partial summary."""
+    history = _history()
+    assert (
+        in_context_compaction.attempt_summary(
+            _TruncatedReplyBackend(), history, keep=2
+        )
+        is None
+    )
+    assert history == _history()
+
+
 def _app(
     tmp_path: pathlib.Path, backend: base.Backend
 ) -> testclient.TestClient:

@@ -23,6 +23,14 @@ SUMMARY_SYSTEM_PROMPT = (
 )
 
 
+class SummaryTruncatedError(RuntimeError):
+    """The summarizer hit its output budget before finishing the handoff.
+
+    Callers must refuse compaction when this is raised: persisting a
+    cut-off summary silently discards the tail of the compacted history.
+    """
+
+
 @dataclasses.dataclass
 class CompactionConfig:
     """Tuning for proactive compaction in begin_turn."""

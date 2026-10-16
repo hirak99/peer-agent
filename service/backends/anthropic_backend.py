@@ -23,7 +23,7 @@ DEFAULT_HOST_MAX_TOOL_TURNS: int | None = None
 # Default per-turn output budget; override with --max-tokens.
 DEFAULT_MAX_TOKENS = 8192
 # Default token budget for the compaction summary reply.
-DEFAULT_COMPACT_SUMMARY_MAX_TOKENS = 2000
+DEFAULT_COMPACT_SUMMARY_MAX_TOKENS = 8000
 # Substrings marking a rejected call as context overflow (not other 400s).
 _OVERFLOW_MARKERS = (
     "too long",
@@ -136,7 +136,12 @@ class AnthropicBackend(base.Backend):
 
     @override
     def summarize(self, messages: list[dict[str, Any]]) -> str:
-        """Distills history into a handoff summary with tools disabled."""
+        """Distills history into a handoff summary with tools disabled.
+
+        Raises compaction.SummaryTruncatedError when the reply exhausts
+        its output budget: callers must refuse compaction rather than
+        persist a cut-off handoff.
+        """
         trimmed = compaction.truncate_for_summary(messages)
         if not trimmed:
             return ""
@@ -155,7 +160,9 @@ class AnthropicBackend(base.Backend):
                 {"role": "user", "content": "Write the handoff summary now."},
             ]
         compact_model = getattr(self, "_compact_model", getattr(self, "_model", ""))
-        summary_budget = getattr(self, "_compact_summary_max_tokens", 2000)
+        summary_budget = getattr(
+            self, "_compact_summary_max_tokens", DEFAULT_COMPACT_SUMMARY_MAX_TOKENS
+        )
         use_cache = self._should_cache()
         response = self._client.messages.create(
             model=compact_model,
@@ -163,6 +170,12 @@ class AnthropicBackend(base.Backend):
             system=self._system_param(compaction.SUMMARY_SYSTEM_PROMPT, use_cache),
             messages=self._message_params(summarizer_messages, use_cache),
         )
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            raise compaction.SummaryTruncatedError(
+                f"Summary truncated at the {summary_budget}-token budget "
+                f"(model {compact_model}); compaction refused. Raise "
+                "--compact-summary-max-tokens and retry."
+            )
         return "".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
@@ -373,6 +386,7 @@ class AnthropicBackend(base.Backend):
             hint=hint,
             tool_turns=tool_turns,
             reasoning=reasoning,
+            truncated=getattr(response, "stop_reason", None) == "max_tokens",
         )
 
     @override
@@ -444,6 +458,7 @@ class AnthropicBackend(base.Backend):
                     tool_turns=tool_turns,
                     compaction=recovered,
                     reasoning="\n\n".join(reasoning_parts).strip(),
+                    truncated=getattr(response, "stop_reason", None) == "max_tokens",
                 )
             # Collect any text accompanying tool_use for the yield summary.
             partial = "".join(
@@ -496,6 +511,7 @@ class AnthropicBackend(base.Backend):
                     meta["hint"] = completion.hint
                     meta["tool_turns"] = completion.tool_turns
                     meta["compaction"] = recovered
+                    meta["truncated"] = completion.truncated
                 yield completion.text
                 return
             try:
@@ -539,6 +555,7 @@ class AnthropicBackend(base.Backend):
                     meta["hint"] = None
                     meta["tool_turns"] = tool_turns
                     meta["compaction"] = recovered
+                    meta["truncated"] = getattr(final, "stop_reason", None) == "max_tokens"
                 return
             messages.append(
                 {

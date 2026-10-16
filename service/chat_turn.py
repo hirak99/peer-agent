@@ -213,8 +213,13 @@ def _maybe_compact_proactive(
     if summary is None:
         try:
             summary = backend.summarize(compaction.truncate_for_summary(old))
+        except compaction.SummaryTruncatedError:
+            # Budget hit: refuse rather than persist a cut-off handoff.
+            return None
         except Exception:
             return None
+    if not summary.strip():
+        return None
     compacted = compaction.build_compacted_history(summary, recent, len(old))
     history[:] = compacted
     record = base.CompactionRecord(
@@ -293,7 +298,15 @@ def compact_conversation(
     if active.in_context:
         summary = in_context_compaction.attempt_summary(backend, history, keep)
     if summary is None:
-        summary = backend.summarize(compaction.truncate_for_summary(old))
+        try:
+            summary = backend.summarize(compaction.truncate_for_summary(old))
+        except compaction.SummaryTruncatedError as exc:
+            raise fastapi.HTTPException(status_code=502, detail=str(exc)) from exc
+    if not summary.strip():
+        raise fastapi.HTTPException(
+            status_code=502,
+            detail="Summarizer returned an empty summary; compaction refused.",
+        )
     compacted = compaction.build_compacted_history(summary, recent, len(old))
     conversations.save(conversation_id, compacted)
     record = base.CompactionRecord(

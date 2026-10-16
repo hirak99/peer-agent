@@ -2,6 +2,9 @@
 
 import types
 
+import pytest
+
+from service import compaction
 from service.backends import base
 from service.backends import openai_compat_backend
 from service.tools import registry
@@ -181,3 +184,41 @@ def test_overflow_markers() -> None:
         )
         is False
     )
+
+
+def _summarize_response(finish_reason: str | None) -> Any:
+    """Builds a chat-completions response ending with the given reason."""
+    message = types.SimpleNamespace(content="partial handoff", tool_calls=None)
+    return types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=message, finish_reason=finish_reason)],
+        usage=None,
+    )
+
+
+def test_summarize_returns_text_on_stop() -> None:
+    """A finished summary is returned verbatim."""
+    backend = _backend()
+    backend._client = types.SimpleNamespace(  # type: ignore[assignment]
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(
+                create=lambda **kwargs: _summarize_response("stop")
+            )
+        )
+    )
+    assert backend.summarize([{"role": "user", "content": "history"}]) == (
+        "partial handoff"
+    )
+
+
+def test_summarize_raises_on_length_finish() -> None:
+    """A budget-exhausted summary raises instead of returning cut-off text."""
+    backend = _backend()
+    backend._client = types.SimpleNamespace(  # type: ignore[assignment]
+        chat=types.SimpleNamespace(
+            completions=types.SimpleNamespace(
+                create=lambda **kwargs: _summarize_response("length")
+            )
+        )
+    )
+    with pytest.raises(compaction.SummaryTruncatedError):
+        backend.summarize([{"role": "user", "content": "history"}])

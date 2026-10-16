@@ -68,6 +68,9 @@ class Completion:
     compaction: CompactionRecord | None = None
     # Accumulated model thinking text across all turns (logs only).
     reasoning: str = ""
+    # True when the final reply text was cut by the output budget.
+    # Compaction callers must refuse to persist a truncated summary.
+    truncated: bool = False
 
 
 class Backend(abc.ABC):
@@ -121,5 +124,6 @@ class Backend(abc.ABC):
             meta["hint"] = completion.hint
             meta["tool_turns"] = completion.tool_turns
             meta["reasoning"] = completion.reasoning
+            meta["truncated"] = completion.truncated
         for index in range(0, len(completion.text), 400):
             yield completion.text[index : index + 400]

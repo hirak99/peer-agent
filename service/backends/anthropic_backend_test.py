@@ -5,6 +5,9 @@ import pathlib
 import time
 import types
 
+import pytest
+
+from service import compaction
 from service.backends import anthropic_backend
 from service.backends import base
 from service.tools import registry
@@ -269,3 +272,54 @@ def test_complete_skips_breakpoints_when_sustained_idle() -> None:
     _suspend_gate(backend)
     backend.complete(history, base.ToolContext(workdir=None), None)
     assert "cache_control" not in json.dumps(calls[1])
+
+
+def _summarize_backend(stop_reason: str | None) -> anthropic_backend.AnthropicBackend:
+    """Builds a backend whose summarize call ends with the given stop reason."""
+    backend = _wired_backend()
+
+    def _create(**kwargs: Any) -> Any:
+        return types.SimpleNamespace(
+            stop_reason=stop_reason,
+            content=[types.SimpleNamespace(type="text", text="partial handoff")],
+        )
+
+    backend._client = cast(
+        Any, types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
+    )
+    return backend
+
+
+def test_summarize_returns_text_on_clean_stop() -> None:
+    """A finished summary is returned verbatim."""
+    backend = _summarize_backend("end_turn")
+    assert (
+        backend.summarize([{"role": "user", "content": "history"}]) == "partial handoff"
+    )
+
+
+def test_summarize_raises_on_max_tokens_stop() -> None:
+    """A budget-exhausted summary raises instead of returning cut-off text."""
+    backend = _summarize_backend("max_tokens")
+    with pytest.raises(compaction.SummaryTruncatedError):
+        backend.summarize([{"role": "user", "content": "history"}])
+
+
+def test_complete_flags_truncated_reply() -> None:
+    """A max_tokens final turn marks the completion as truncated."""
+    backend = _wired_backend()
+
+    def _create(**kwargs: Any) -> Any:
+        return types.SimpleNamespace(
+            stop_reason="max_tokens",
+            content=[types.SimpleNamespace(type="text", text="cut off")],
+            usage=types.SimpleNamespace(input_tokens=50, output_tokens=5),
+        )
+
+    backend._client = cast(
+        Any, types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
+    )
+    completion = backend.complete(
+        [{"role": "user", "content": "hi"}], base.ToolContext(workdir=None), None
+    )
+    assert completion.truncated is True

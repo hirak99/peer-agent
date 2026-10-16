@@ -37,8 +37,17 @@ instead of re-prefilling tens of thousands of tokens cold. Raise
 `--compact-keep-messages` (default 20, tool-pair-safe split),
 `--compact-margin-tokens` (default 20000; effective margin is
 `max(margin, 5% of window)`), `--compact-model`,
-`--compact-summary-max-tokens`, `--compact-context-window`,
+`--compact-summary-max-tokens` (default 8000),
+`--compact-context-window`,
 `--compact-in-context`. Per-turn: `{"compact": true}` forces,
 `{"compact": false}` inhibits. Manual: `POST /compact
 {"conversation_id": "..."}` (CLI: `python client/chat.py "/compact"
 --conversation-id <id>`).
+
+## Truncation refusal
+
+A summary that exhausts `--compact-summary-max-tokens` (or comes back
+empty) is never persisted: proactive compaction skips the splice and
+continues the turn on uncompacted history, `POST /compact` fails with
+502, and overflow recovery fails the turn instead of writing a cut-off
+handoff. Raise `--compact-summary-max-tokens` and retry.
