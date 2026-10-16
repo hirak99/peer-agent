@@ -1,6 +1,6 @@
 # Peer Agent skill
 
-Talk to the stronger peer agent over loopback HTTP. The service owns history;
+Talk to the peer agent over loopback HTTP. The service owns history;
 you only send the new prompt.
 
 ## Endpoint
@@ -40,39 +40,31 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 # {"text":"...","conversation_id":"...","status":"done"}
 ```
 
-Long replies yield instead of crashing. If `status` is
-`continuation_required`, resume with the same id until `done`:
+If `status` is `continuation_required`, resume with the same id until
+`done` — that is the gate, do not stop at the first partial text:
 
 ```sh
 curl -s localhost:8471/chat -H 'content-type: application/json' \
   -d '{"prompt":"continue","conversation_id":"SAME_ID","cwd":"/same/dir"}'
 ```
 
-Weak models: do not stop at the first partial text. Loop on
-`continuation_required` — that is the gate. Peer tool turns are unlimited
-by default; the host may set a host-controlled budget per reply with
-`"host_max_tool_turns": N` (or `--host-max-tool-turns N` on the server)
-to force a checkpoint it must resume via `continue`.
+To force such a checkpoint yourself, set `"host_max_tool_turns": N` on
+a call (server flag `--host-max-tool-turns N` sets the default).
 
 Or use the CLI: `python client/chat.py "PROMPT" [--conversation-id ID] [--stream] [--cwd DIR] [--null-cwd] [--loop] [--host-max-tool-turns N]`.
 `--loop` auto-sends `continue` while the server asks for it.
-The CLI defaults `--cwd` to its own working directory; `--null-cwd` sends
-`null` for pure Q&A turns (the peer then gets no `bash` tool that turn).
+The CLI defaults `--cwd` to its own working directory; `--null-cwd`
+sends `null` for pure Q&A turns (no filesystem tools that turn, though
+web fetching still works).
 
 ## Notes
 
 - `cwd` is required on every call: an absolute, existing directory, or `null`.
   Relative/missing paths return 400, a missing field returns 422.
 - Unknown `conversation_id` returns 404; drop the id and retry to start fresh.
-- The peer can run `bash` and `read` (line-numbered file slices) server-side;
-  ask it to run commands or read files when useful. It can also `edit` files
-  with exact search-and-replace (unique match, or `replace_all` for all).
-  It can `web_fetch` http(s) URLs directly (no workdir needed) — prefer that
-  over `curl` via `bash` for single fetches.
-- Every turn is logged to `logs/<conversation_id>.jsonl`.
-- Prefer one thread per task so the peer keeps context.
-- Long threads auto-compact (old turns → summary, recent kept); full history
-  stays in `logs/`. Force with `"compact":true`, skip with `"compact":false`.
-  Manual: `POST /compact '{"conversation_id":"ID"}'`. If a turn ever fails
-  with context-overflow, it retries once after compaction; otherwise just
-  resend — the next turn compacts first.
+- The peer works with files, runs commands, and fetches the web
+  server-side — state the outcome you want, not the tool to use.
+- Long threads auto-compact (old turns → summary, recent kept).
+  On failure just resend — the next turn compacts first.
+  Manual/forced compaction: `POST /compact '{"conversation_id":"ID"}'`,
+  or `"compact":true/false` per call.
