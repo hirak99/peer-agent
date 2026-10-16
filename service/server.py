@@ -334,6 +334,12 @@ def main() -> None:
     parser.add_argument("--compact-model", default=None)
     parser.add_argument("--compact-context-window", type=int, default=None)
     parser.add_argument(
+        "--compact-in-context",
+        action="store_true",
+        help="Compact via a transient in-context turn (warm cache) first, "
+        "falling back to a separate summarize call. For slow-prefill local models.",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -365,6 +371,7 @@ def main() -> None:
             margin_tokens=args.compact_margin_tokens,
             keep_messages=args.compact_keep_messages,
             context_window_override=args.compact_context_window,
+            in_context=args.compact_in_context,
         ),
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port)

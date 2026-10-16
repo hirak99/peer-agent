@@ -12,6 +12,7 @@ import fastapi
 
 from service import compaction
 from service import event_log
+from service import in_context_compaction
 from service import log_events
 from service import models
 from service import store
@@ -194,10 +195,14 @@ def _maybe_compact_proactive(
             return None
     pre_messages = len(history)
     pre_est = compaction.estimate_tokens(history)
-    try:
-        summary = backend.summarize(compaction.truncate_for_summary(old))
-    except Exception:
-        return None
+    summary: str | None = None
+    if active.in_context:
+        summary = in_context_compaction.attempt_summary(backend, history, keep)
+    if summary is None:
+        try:
+            summary = backend.summarize(compaction.truncate_for_summary(old))
+        except Exception:
+            return None
     compacted = compaction.build_compacted_history(summary, recent, len(old))
     history[:] = compacted
     record = base.CompactionRecord(
@@ -271,7 +276,12 @@ def compact_conversation(
             "post_messages": len(history),
         }
     pre_est = compaction.estimate_tokens(history)
-    summary = backend.summarize(compaction.truncate_for_summary(old))
+    keep = compaction.resolve_keep(active)
+    summary: str | None = None
+    if active.in_context:
+        summary = in_context_compaction.attempt_summary(backend, history, keep)
+    if summary is None:
+        summary = backend.summarize(compaction.truncate_for_summary(old))
     compacted = compaction.build_compacted_history(summary, recent, len(old))
     conversations.save(conversation_id, compacted)
     record = base.CompactionRecord(

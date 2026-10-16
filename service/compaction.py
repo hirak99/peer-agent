@@ -31,6 +31,10 @@ class CompactionConfig:
     margin_tokens: int | None = DEFAULT_MARGIN_TOKENS
     # Recent tail preserved verbatim.
     keep_messages: int | None = DEFAULT_KEEP_MESSAGES
+    # Summarize via a transient in-context turn (warm cache) first,
+    # falling back to a separate summarize() call. Opt-in for slow-prefill
+    # local models; recovery compaction always uses summarize().
+    in_context: bool = False
     # Manual window override (tests, unknown models); else backend value.
     context_window_override: int | None = None
 
