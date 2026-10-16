@@ -62,6 +62,15 @@ _CACHE_IDLE_DISABLE_AFTER = 3
 class AnthropicBackend(base.Backend):
     """Runs replies via the Anthropic messages API, executing tools inline."""
 
+    # Class-level defaults mirror __init__ so partially-constructed test
+    # doubles (built via __new__) see the same attribute contract.
+    _compact_model: str = ""
+    _compact_summary_max_tokens: int = DEFAULT_COMPACT_SUMMARY_MAX_TOKENS
+    _max_tokens: int = DEFAULT_MAX_TOKENS
+    _max_input_tokens: int | None = None
+    _compact_keep: int = compaction.DEFAULT_KEEP_MESSAGES
+    _cache_gate: cache_policy.CacheGate | None = None
+
     def __init__(
         self,
         model: str,
@@ -116,14 +125,12 @@ class AnthropicBackend(base.Backend):
     @override
     def get_context_window(self) -> int | None:
         """Returns the model input budget stashed at startup."""
-        window = getattr(self, "_max_input_tokens", None)
-        return window if isinstance(window, int) else None
+        return self._max_input_tokens
 
     @override
     def get_max_output_tokens(self) -> int | None:
         """Returns the per-turn output reserve for margin checks."""
-        reserve = getattr(self, "_max_tokens", None)
-        return reserve if isinstance(reserve, int) else None
+        return self._max_tokens
 
     @staticmethod
     def is_context_overflow(exc: BaseException) -> bool:
@@ -159,10 +166,8 @@ class AnthropicBackend(base.Backend):
                 *trimmed,
                 {"role": "user", "content": "Write the handoff summary now."},
             ]
-        compact_model = getattr(self, "_compact_model", getattr(self, "_model", ""))
-        summary_budget = getattr(
-            self, "_compact_summary_max_tokens", DEFAULT_COMPACT_SUMMARY_MAX_TOKENS
-        )
+        compact_model = self._compact_model or self._model
+        summary_budget = self._compact_summary_max_tokens
         use_cache = self._should_cache()
         response = self._client.messages.create(
             model=compact_model,
@@ -180,12 +185,17 @@ class AnthropicBackend(base.Backend):
             block.text for block in response.content if block.type == "text"
         ).strip()
 
+    @override
+    def summary_budget(self) -> int:
+        """Returns the configured summarizer output budget."""
+        return self._compact_summary_max_tokens
+
     def _compact_for_recovery(
         self, messages: list[dict[str, Any]]
     ) -> base.CompactionRecord | None:
         """Replaces old history with a summary in place; None when too short."""
         pre_est = compaction.estimate_tokens(messages)
-        keep = getattr(self, "_compact_keep", compaction.DEFAULT_KEEP_MESSAGES)
+        keep = self._compact_keep
         old, recent = compaction.split_for_compaction(messages, keep)
         if not old:
             return None
@@ -226,13 +236,12 @@ class AnthropicBackend(base.Backend):
 
     def _should_cache(self) -> bool:
         """Delegates to the shared recency gate (one decision per request)."""
-        gate = getattr(self, "_cache_gate", None)
+        gate = self._cache_gate
         if gate is None:
-            gate = cache_policy.CacheGate(
+            gate = self._cache_gate = cache_policy.CacheGate(
                 freshness_window_s=_CACHE_FRESHNESS_WINDOW_S,
                 idle_disable_after=_CACHE_IDLE_DISABLE_AFTER,
             )
-            self._cache_gate = gate
         return gate.should_cache()
 
     def _system_param(self, text: str | None = None, use_cache: bool = True) -> Any:

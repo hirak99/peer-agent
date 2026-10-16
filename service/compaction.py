@@ -3,6 +3,8 @@
 import dataclasses
 import json
 
+from service.backends import base
+
 from typing import Any
 
 # Fallback headroom when no margin is configured explicitly.
@@ -52,15 +54,14 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     return len(json.dumps(messages, default=str)) // 4
 
 
-def resolve_window(backend: Any, config: CompactionConfig | None) -> int | None:
+def resolve_window(
+    backend: base.Backend, config: CompactionConfig | None
+) -> int | None:
     """Returns the effective input budget, or None when unknown."""
     if config is not None and config.context_window_override is not None:
         return config.context_window_override
-    get_window = getattr(backend, "get_context_window", None)
-    if callable(get_window):
-        window = get_window()
-        return window if isinstance(window, int) else None
-    return None
+    window = backend.get_context_window()
+    return window if isinstance(window, int) else None
 
 
 def resolve_keep(config: CompactionConfig | None) -> int:

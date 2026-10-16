@@ -106,12 +106,6 @@ def maybe_emit_system_prompt(
         conversations.save_system_prompt(conversation_id, system_prompt)
 
 
-def _summary_budget(backend: base.Backend | None) -> int | None:
-    """Returns the summarizer output budget, or None when unknown."""
-    budget = getattr(backend, "_compact_summary_max_tokens", None)
-    return budget if isinstance(budget, int) else None
-
-
 def log_compaction(
     events: event_log.EventLog,
     conversation_id: str,
@@ -277,7 +271,7 @@ def begin_turn(
                 backend.describe()["model"],
                 record,
                 backup_path=backup_path,
-                summary_budget=_summary_budget(backend),
+                summary_budget=backend.summary_budget(),
             )
     return TurnState(
         conversation_id=conversation_id,
@@ -341,7 +335,7 @@ def compact_conversation(
         backend.describe()["model"],
         record,
         backup_path=backup_path,
-        summary_budget=_summary_budget(backend),
+        summary_budget=backend.summary_budget(),
     )
     return {
         "conversation_id": conversation_id,
@@ -376,7 +370,7 @@ def finish_turn(
             backend.describe()["model"],
             completion.compaction,
             backup_path=backup_path,
-            summary_budget=_summary_budget(backend),
+            summary_budget=backend.summary_budget(),
         )
     conversations.save(state.conversation_id, state.history)
     log_completion(backend, events, state.conversation_id, completion)
@@ -413,7 +407,7 @@ def finish_stream_turn(
             backend.describe()["model"],
             record,
             backup_path=backup_path,
-            summary_budget=_summary_budget(backend),
+            summary_budget=backend.summary_budget(),
         )
     conversations.save(state.conversation_id, state.history)
     log_completion(

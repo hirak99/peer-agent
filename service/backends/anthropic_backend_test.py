@@ -192,6 +192,7 @@ def _suspend_gate(backend: anthropic_backend.AnthropicBackend) -> None:
     """Drives the backend's gate into the suspended state deterministically."""
     backend._should_cache()
     gate = backend._cache_gate
+    assert gate is not None
     start = time.monotonic() - 2000.0
     for offset in (0.0, 400.0, 800.0, 1200.0):
         gate.should_cache(now=start + offset)

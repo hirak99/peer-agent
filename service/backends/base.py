@@ -92,6 +92,10 @@ class Backend(abc.ABC):
         """Returns the per-turn output reserve, or None when unknown."""
         return None
 
+    def summary_budget(self) -> int | None:
+        """Returns the summarizer output budget in tokens, or None when unknown."""
+        return None
+
     def summarize(self, messages: list[dict[str, Any]]) -> str:
         """Distills messages into a handoff summary for compaction."""
         raise NotImplementedError("summarize is not supported by this backend.")

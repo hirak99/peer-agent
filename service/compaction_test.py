@@ -314,7 +314,9 @@ def test_manual_compact_fails_on_truncated_summary(tmp_path: pathlib.Path) -> No
 class _BudgetedStubBackend(stub_backend.StubBackend):
     """Stub carrying a summary budget like the real backends."""
 
-    _compact_summary_max_tokens: int = 32
+    @override
+    def summary_budget(self) -> int:
+        return 32
 
 
 def _compaction_events(tmp_path: pathlib.Path, cid: str) -> list[dict[str, Any]]:

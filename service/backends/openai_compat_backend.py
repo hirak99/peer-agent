@@ -52,6 +52,14 @@ _OVERFLOW_MARKERS = (
 class OpenAICompatBackend(base.Backend):
     """Runs replies via an OpenAI-compatible chat-completions endpoint."""
 
+    # Class-level defaults mirror __init__ so partially-constructed test
+    # doubles (built via __new__) see the same attribute contract.
+    _context_window: int | None = None
+    _max_tokens: int = DEFAULT_MAX_TOKENS
+    _compact_model: str = ""
+    _compact_summary_max_tokens: int = DEFAULT_COMPACT_SUMMARY_MAX_TOKENS
+    _compact_keep: int = compaction.DEFAULT_KEEP_MESSAGES
+
     def __init__(
         self,
         model: str,
@@ -104,14 +112,12 @@ class OpenAICompatBackend(base.Backend):
     @override
     def get_context_window(self) -> int | None:
         """Returns the configured input budget, or None when unknown."""
-        window = getattr(self, "_context_window", None)
-        return window if isinstance(window, int) else None
+        return self._context_window
 
     @override
     def get_max_output_tokens(self) -> int | None:
         """Returns the per-turn output reserve for margin checks."""
-        reserve = getattr(self, "_max_tokens", None)
-        return reserve if isinstance(reserve, int) else None
+        return self._max_tokens
 
     @staticmethod
     def is_context_overflow(exc: BaseException) -> bool:
@@ -308,12 +314,17 @@ class OpenAICompatBackend(base.Backend):
             )
         return (getattr(response.choices[0].message, "content", None) or "").strip()
 
+    @override
+    def summary_budget(self) -> int:
+        """Returns the configured summarizer output budget."""
+        return self._compact_summary_max_tokens
+
     def _compact_for_recovery(
         self, messages: list[dict[str, Any]]
     ) -> base.CompactionRecord | None:
         """Replaces old history with a summary in place; None when too short."""
         pre_est = compaction.estimate_tokens(messages)
-        keep = getattr(self, "_compact_keep", compaction.DEFAULT_KEEP_MESSAGES)
+        keep = self._compact_keep
         old, recent = compaction.split_for_compaction(messages, keep)
         if not old:
             return None
