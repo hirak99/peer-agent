@@ -1,6 +1,6 @@
 """Deterministic stub backend for tests and offline bring-up."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from service.backends import base
 
@@ -26,6 +26,7 @@ class StubBackend(base.Backend):
         messages: list[dict[str, Any]],
         context: base.ToolContext,
         host_max_tool_turns: int | None = None,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> base.Completion:
         """Returns a canned reply quoting the latest user turn."""
         last: Any = messages[-1]["content"] if messages else ""
@@ -41,9 +42,10 @@ class StubBackend(base.Backend):
         context: base.ToolContext,
         host_max_tool_turns: int | None = None,
         meta: dict[str, Any] | None = None,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> Iterator[str]:
         """Yields the canned reply word by word."""
-        completion = self.complete(messages, context, host_max_tool_turns)
+        completion = self.complete(messages, context, host_max_tool_turns, on_tool_event)
         if meta is not None:
             meta["usage"] = completion.usage
             meta["status"] = completion.status

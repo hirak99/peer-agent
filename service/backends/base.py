@@ -3,7 +3,7 @@
 import abc
 import dataclasses
 import pathlib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from service import log_events
 
@@ -99,6 +99,7 @@ class Backend(abc.ABC):
         messages: list[dict[str, Any]],
         context: ToolContext,
         host_max_tool_turns: int | None = None,
+        on_tool_event: Callable[[ToolEvent], None] | None = None,
     ) -> Completion:
         """Runs the model (including tool turns) to a final reply."""
 
@@ -109,9 +110,10 @@ class Backend(abc.ABC):
         context: ToolContext,
         host_max_tool_turns: int | None = None,
         meta: dict[str, Any] | None = None,
+        on_tool_event: Callable[[ToolEvent], None] | None = None,
     ) -> Iterator[str]:
         """Yields reply text pieces; appends observed tool events."""
-        completion = self.complete(messages, context, host_max_tool_turns)
+        completion = self.complete(messages, context, host_max_tool_turns, on_tool_event)
         tool_events.extend(completion.tool_events)
         if meta is not None:
             meta["usage"] = completion.usage

@@ -1,7 +1,7 @@
 """Anthropic backend with a server-side tool loop."""
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import anthropic
 
@@ -296,6 +296,7 @@ class AnthropicBackend(base.Backend):
         tool_events: list[base.ToolEvent],
         context: base.ToolContext,
         seen: list[tuple[str, bool]],
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> list[dict[str, Any]]:
         """Executes tool_use blocks into Anthropic tool_result blocks."""
         triples = [
@@ -314,7 +315,7 @@ class AnthropicBackend(base.Backend):
                 "is_error": is_error,
             }
             for call_id, _name, output, is_error in tool_loop.execute_calls(
-                self._tools, triples, tool_events, context, seen
+                self._tools, triples, tool_events, context, seen, on_tool_event
             )
         ]
 
@@ -378,6 +379,7 @@ class AnthropicBackend(base.Backend):
         messages: list[dict[str, Any]],
         context: base.ToolContext,
         host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> base.Completion:
         """Runs model turns until final text, executing tools between turns."""
         cap = host_max_tool_turns
@@ -458,7 +460,7 @@ class AnthropicBackend(base.Backend):
             messages.append(
                 {
                     "role": "user",
-                    "content": self._run_calls(calls, tool_events, context, seen),
+                    "content": self._run_calls(calls, tool_events, context, seen, on_tool_event),
                 }
             )
             tool_turns += 1
@@ -472,6 +474,7 @@ class AnthropicBackend(base.Backend):
         context: base.ToolContext,
         host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
         meta: dict[str, Any] | None = None,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> Iterator[str]:
         """Streams reply tokens live, running tool turns between streams."""
         cap = host_max_tool_turns
@@ -544,7 +547,7 @@ class AnthropicBackend(base.Backend):
             messages.append(
                 {
                     "role": "user",
-                    "content": self._run_calls(calls, tool_events, context, seen),
+                    "content": self._run_calls(calls, tool_events, context, seen, on_tool_event),
                 }
             )
             tool_turns += 1

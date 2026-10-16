@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 import pathlib
+from collections.abc import Callable
 
 from fastapi import testclient
 
@@ -58,6 +59,7 @@ class _FailingCompleteBackend(stub_backend.StubBackend):
         messages: list[dict[str, Any]],
         context: base.ToolContext,
         host_max_tool_turns: int | None = None,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> base.Completion:
         if messages and messages[-1].get("content") == in_context_compaction.SUMMARY_REQUEST:
             raise RuntimeError("boom")
@@ -73,6 +75,7 @@ class _EmptyReplyBackend(stub_backend.StubBackend):
         messages: list[dict[str, Any]],
         context: base.ToolContext,
         host_max_tool_turns: int | None = None,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> base.Completion:
         messages.append({"role": "assistant", "content": "   "})
         return base.Completion(text="   ", usage=None, tool_events=[])

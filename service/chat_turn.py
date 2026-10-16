@@ -129,28 +129,40 @@ def log_compaction(
     )
 
 
+def record_tool_event(
+    events: event_log.EventLog,
+    conversation_id: str,
+    tool_event: base.ToolEvent,
+) -> None:
+    """Records one settled tool call plus its result, immediately."""
+    events.record(
+        conversation_id,
+        log_events.ToolCallEvent(
+            name=tool_event.name, tool_input=tool_event.tool_input
+        ),
+    )
+    events.record(
+        conversation_id,
+        log_events.ToolResultEvent(
+            name=tool_event.name,
+            output=tool_event.output,
+            failure_reason=tool_event.failure_reason,
+        ),
+    )
+
+
 def log_completion(
     backend: base.Backend,
     events: event_log.EventLog,
     conversation_id: str,
     completion: base.Completion,
 ) -> None:
-    """Records tool traffic plus the final response event."""
-    for tool_event in completion.tool_events:
-        events.record(
-            conversation_id,
-            log_events.ToolCallEvent(
-                name=tool_event.name, tool_input=tool_event.tool_input
-            ),
-        )
-        events.record(
-            conversation_id,
-            log_events.ToolResultEvent(
-                name=tool_event.name,
-                output=tool_event.output,
-                failure_reason=tool_event.failure_reason,
-            ),
-        )
+    """Records the final response event.
+
+    Tool traffic is recorded live via the on_tool_event sink during
+    complete(), not here — so per-call timestamps reflect execution time,
+    and calls survive a mid-turn failure.
+    """
     identity = backend.describe()
     events.record(
         conversation_id,
@@ -309,7 +321,14 @@ def finish_turn(
     state: TurnState,
 ) -> models.ChatResponse:
     """Runs the backend, persists history, and builds the /chat response."""
-    completion = backend.complete(state.history, state.context, state.cap)
+    completion = backend.complete(
+        state.history,
+        state.context,
+        state.cap,
+        on_tool_event=lambda event: record_tool_event(
+            events, state.conversation_id, event
+        ),
+    )
     if completion.compaction is not None:
         log_compaction(
             events,

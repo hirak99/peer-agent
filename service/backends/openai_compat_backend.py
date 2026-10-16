@@ -10,6 +10,7 @@ never fed back into history.
 
 import json
 import os
+from collections.abc import Callable
 
 import openai
 
@@ -384,6 +385,7 @@ class OpenAICompatBackend(base.Backend):
         messages: list[dict[str, Any]],
         context: base.ToolContext,
         host_max_tool_turns: int | None = DEFAULT_HOST_MAX_TOOL_TURNS,
+        on_tool_event: Callable[[base.ToolEvent], None] | None = None,
     ) -> base.Completion:
         """Runs model turns until final text, executing tools between turns."""
         cap = host_max_tool_turns
@@ -447,6 +449,7 @@ class OpenAICompatBackend(base.Backend):
                 tool_events,
                 context,
                 seen,
+                on_tool_event,
             )
             self._store_tool_results(messages, executed)
             tool_turns += 1

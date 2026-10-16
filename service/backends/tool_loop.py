@@ -9,6 +9,7 @@ while the hold policy, usage merge, and budget notice live here.
 
 import hashlib
 import json
+from collections.abc import Callable
 
 from service import log_events
 from service.backends import base
@@ -73,12 +74,15 @@ def execute_calls(
     tool_events: list[base.ToolEvent],
     context: base.ToolContext,
     seen: list[tuple[str, bool]],
+    on_event: Callable[[base.ToolEvent], None] | None = None,
 ) -> list[tuple[str, str, str, bool]]:
     """Executes (call_id, name, input) triples via the registry.
 
     Returns (call_id, name, output, is_error) tuples; the caller wraps
     them in provider-shaped result blocks. Held and unknown-tool calls
-    never execute.
+    never execute. Each settled call is also appended to tool_events and,
+    when given, reported to on_event immediately (live logging) rather
+    than only at turn end.
     """
     executed: list[tuple[str, str, str, bool]] = []
     for call_id, name, tool_input in calls:
@@ -93,6 +97,8 @@ def execute_calls(
                     failure_reason="held: identical call failed repeatedly",
                 )
             )
+            if on_event is not None:
+                on_event(tool_events[-1])
             executed.append((call_id, name, held_output, True))
             continue
         tool = tools.get(name)
@@ -113,6 +119,8 @@ def execute_calls(
                 failure_reason=result.failure_reason,
             )
         )
+        if on_event is not None:
+            on_event(tool_events[-1])
         executed.append((call_id, name, result.output, failed))
     return executed
 

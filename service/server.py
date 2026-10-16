@@ -218,8 +218,17 @@ def build_app(
                     tool_events: list[base.ToolEvent] = []
                     meta: dict[str, Any] = {}
                     pieces: list[str] = []
+
+                    def _record_live(event: base.ToolEvent) -> None:
+                        chat_turn.record_tool_event(events, conversation_id, event)
+
                     for token in backend.stream_text(
-                        state.history, tool_events, state.context, state.cap, meta
+                        state.history,
+                        tool_events,
+                        state.context,
+                        state.cap,
+                        meta,
+                        _record_live,
                     ):
                         pieces.append(token)
                         yield (
