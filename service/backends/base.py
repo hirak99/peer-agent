@@ -66,6 +66,8 @@ class Completion:
     tool_turns: int = 0
     # Compaction performed during error recovery, if any.
     compaction: CompactionRecord | None = None
+    # Accumulated model thinking text across all turns (logs only).
+    reasoning: str = ""
 
 
 class Backend(abc.ABC):
@@ -116,5 +118,6 @@ class Backend(abc.ABC):
             meta["status"] = completion.status
             meta["hint"] = completion.hint
             meta["tool_turns"] = completion.tool_turns
+            meta["reasoning"] = completion.reasoning
         for index in range(0, len(completion.text), 400):
             yield completion.text[index : index + 400]

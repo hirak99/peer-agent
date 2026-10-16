@@ -279,6 +279,17 @@ class AnthropicBackend(base.Backend):
     def _call_key(name: str, tool_input: dict[str, Any]) -> str:
         return tool_loop.call_key(name, tool_input)
 
+    @staticmethod
+    def _extract_reasoning(content: list[Any]) -> str:
+        """Collects thinking text from response content blocks."""
+        parts: list[str] = []
+        for block in content:
+            if getattr(block, "type", None) == "thinking":
+                text = getattr(block, "thinking", None)
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "\n\n".join(parts)
+
     def _run_calls(
         self,
         calls: list[Any],
@@ -344,6 +355,7 @@ class AnthropicBackend(base.Backend):
         summary = "".join(
             block.text for block in response.content if block.type == "text"
         )
+        reasoning = self._extract_reasoning(response.content)
         text = (text_prefix + "\n\n" + summary).strip() if text_prefix else summary
         messages.append({"role": "assistant", "content": text})
         hint = (
@@ -357,6 +369,7 @@ class AnthropicBackend(base.Backend):
             status="continuation_required",
             hint=hint,
             tool_turns=tool_turns,
+            reasoning=reasoning,
         )
 
     @override
@@ -373,6 +386,7 @@ class AnthropicBackend(base.Backend):
         usage: log_events.TokenUsage | None = None
         tool_turns = 0
         text_prefix = ""
+        reasoning_parts: list[str] = []
         turn = 0
         recovered: base.CompactionRecord | None = None
         while True:
@@ -381,6 +395,10 @@ class AnthropicBackend(base.Backend):
                     messages, text_prefix, tool_events, usage, tool_turns, cap
                 )
                 completion.compaction = recovered
+                if reasoning_parts or completion.reasoning:
+                    completion.reasoning = "\n\n".join(
+                        reasoning_parts + ([completion.reasoning] if completion.reasoning else [])
+                    ).strip()
                 return completion
             try:
                 use_cache = self._should_cache()
@@ -403,6 +421,9 @@ class AnthropicBackend(base.Backend):
                 usage = self._accumulate_usage(
                     usage, self._to_token_usage(response.usage)
                 )
+            turn_reasoning = self._extract_reasoning(response.content)
+            if turn_reasoning:
+                reasoning_parts.append(turn_reasoning)
             calls = [block for block in response.content if block.type == "tool_use"]
             if not calls:
                 text = "".join(
@@ -418,6 +439,7 @@ class AnthropicBackend(base.Backend):
                     hint=None,
                     tool_turns=tool_turns,
                     compaction=recovered,
+                    reasoning="\n\n".join(reasoning_parts).strip(),
                 )
             # Collect any text accompanying tool_use for the yield summary.
             partial = "".join(

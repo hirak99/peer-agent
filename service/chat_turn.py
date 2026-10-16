@@ -160,6 +160,7 @@ def log_completion(
             backend=identity["backend"],
             status=completion.status,  # type: ignore[arg-type]
             tool_turns=completion.tool_turns,
+            reasoning=completion.reasoning or None,
         ),
     )
 

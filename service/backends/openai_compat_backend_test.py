@@ -93,19 +93,37 @@ def test_history_translation_round_trip() -> None:
 
 def test_parse_response_drops_reasoning() -> None:
     """Reasoning content never becomes reply text or tool input."""
-    text, calls = openai_compat_backend.OpenAICompatBackend._parse_response(
+    text, calls, reasoning = openai_compat_backend.OpenAICompatBackend._parse_response(
         _response(content="four", tool_calls=[_tool_call("c1", "bash", '{"command": "x"}')])
     )
     assert text == "four"
     assert calls == [("c1", "bash", {"command": "x"})]
+    assert reasoning == "thinking..."
 
 
 def test_parse_response_bad_arguments() -> None:
     """Unparseable tool arguments degrade to an empty input dict."""
-    _, calls = openai_compat_backend.OpenAICompatBackend._parse_response(
+    _, calls, _ = openai_compat_backend.OpenAICompatBackend._parse_response(
         _response(content="", tool_calls=[_tool_call("c1", "bash", "not-json")])
     )
     assert calls == [("c1", "bash", {})]
+
+
+def test_complete_captures_reasoning() -> None:
+    """Reasoning text is accumulated but never leaks into reply text."""
+    backend = _backend()
+    first = _response(
+        content="first text",
+        tool_calls=[_tool_call("c1", "bash", '{"command": "echo hi"}')],
+    )
+    final = _response(content="done")
+    calls = iter([first, final])
+    backend._request_turn = lambda messages, context: next(calls)  # type: ignore[method-assign]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "run it"}]
+    completion = backend.complete(messages, base.ToolContext(workdir=None))
+    assert completion.text == "first text\n\ndone"
+    assert completion.reasoning == "thinking...\n\nthinking..."
+    assert "thinking..." not in completion.text
 
 
 def test_complete_runs_tool_loop() -> None:

@@ -195,17 +195,18 @@ class OpenAICompatBackend(base.Backend):
         return {"tools": schemas}
 
     @staticmethod
-    def _parse_response(response: Any) -> tuple[str, list[tuple[str, str, dict[str, Any]]]]:
-        """Splits a chat completion into (text, [(id, name, input)]).
+    def _parse_response(response: Any) -> tuple[str, list[tuple[str, str, dict[str, Any]]], str]:
+        """Splits a chat completion into (text, [(id, name, input)], reasoning).
 
-        Drops reasoning content: it is billed but is neither reply text
-        nor history.
+        Captures reasoning content for logging: it is billed but is neither
+        reply text nor history.
         """
         choices = getattr(response, "choices", None) or []
         if not choices:
-            return "", []
+            return "", [], ""
         message = getattr(choices[0], "message", None)
         text = getattr(message, "content", None) or ""
+        reasoning = getattr(message, "reasoning_content", None) or ""
         calls: list[tuple[str, str, dict[str, Any]]] = []
         for call in getattr(message, "tool_calls", None) or []:
             function = getattr(call, "function", None)
@@ -217,7 +218,7 @@ class OpenAICompatBackend(base.Backend):
                 parsed = {}
             tool_input = parsed if isinstance(parsed, dict) else {}
             calls.append((getattr(call, "id", None) or "", name, tool_input))
-        return text, calls
+        return text, calls, reasoning
 
     @staticmethod
     def _to_token_usage(usage: Any) -> log_events.TokenUsage:
@@ -318,7 +319,7 @@ class OpenAICompatBackend(base.Backend):
             usage = tool_loop.accumulate_usage(
                 usage, self._to_token_usage(response.usage)
             )
-        text, _ = self._parse_response(response)
+        text, _, turn_reasoning = self._parse_response(response)
         full = (text_prefix + "\n\n" + text).strip() if text_prefix else text
         messages.append({"role": "assistant", "content": full})
         hint = (
@@ -332,6 +333,7 @@ class OpenAICompatBackend(base.Backend):
             status="continuation_required",
             hint=hint,
             tool_turns=tool_turns,
+            reasoning=turn_reasoning,
         )
 
     def _store_assistant_turn(
@@ -390,6 +392,7 @@ class OpenAICompatBackend(base.Backend):
         usage: log_events.TokenUsage | None = None
         tool_turns = 0
         text_prefix = ""
+        reasoning_parts: list[str] = []
         recovered: base.CompactionRecord | None = None
         while True:
             if cap is not None and tool_turns >= cap:
@@ -397,6 +400,11 @@ class OpenAICompatBackend(base.Backend):
                     messages, text_prefix, tool_events, usage, tool_turns, cap
                 )
                 completion.compaction = recovered
+                if reasoning_parts or completion.reasoning:
+                    combined = [*reasoning_parts, completion.reasoning]
+                    completion.reasoning = "\n\n".join(
+                        part for part in combined if part
+                    ).strip()
                 return completion
             try:
                 response = self._request_turn(messages, context)
@@ -412,7 +420,9 @@ class OpenAICompatBackend(base.Backend):
                 usage = tool_loop.accumulate_usage(
                     usage, self._to_token_usage(response.usage)
                 )
-            text, calls = self._parse_response(response)
+            text, calls, turn_reasoning = self._parse_response(response)
+            if turn_reasoning:
+                reasoning_parts.append(turn_reasoning)
             if not calls:
                 full = (text_prefix + "\n\n" + text).strip() if text_prefix else text
                 messages.append({"role": "assistant", "content": full})
@@ -424,6 +434,7 @@ class OpenAICompatBackend(base.Backend):
                     hint=None,
                     tool_turns=tool_turns,
                     compaction=recovered,
+                    reasoning="\n\n".join(reasoning_parts).strip(),
                 )
             if text:
                 text_prefix = (

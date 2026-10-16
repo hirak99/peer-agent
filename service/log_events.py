@@ -57,6 +57,8 @@ class ResponseEvent(BaseEvent):
     status: Literal["done", "continuation_required"] = "done"
     # Tool turns executed to produce this reply.
     tool_turns: int = 0
+    # Accumulated model thinking text (logs only; None when absent).
+    reasoning: str | None = None
 
 
 class ToolCallEvent(BaseEvent):

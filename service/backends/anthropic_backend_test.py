@@ -212,6 +212,42 @@ def test_helpers_omit_breakpoints_when_gated_off() -> None:
     assert params == [{"role": "user", "content": "hi"}]
 
 
+def test_extract_reasoning_collects_thinking_blocks() -> None:
+    """Thinking blocks are collected with a blank line separator."""
+    content = [
+        types.SimpleNamespace(type="thinking", thinking="step one"),
+        types.SimpleNamespace(type="text", text="visible"),
+        types.SimpleNamespace(type="thinking", thinking="step two"),
+    ]
+    result = anthropic_backend.AnthropicBackend._extract_reasoning(cast(Any, content))
+    assert result == "step one\n\nstep two"
+
+
+def test_complete_captures_reasoning() -> None:
+    """Reasoning blocks are accumulated but never leak into reply text."""
+    backend = _wired_backend()
+    calls: list[dict[str, Any]] = []
+
+    def _create(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            content=[
+                types.SimpleNamespace(type="thinking", thinking="internal"),
+                types.SimpleNamespace(type="text", text="visible reply"),
+            ],
+            usage=types.SimpleNamespace(input_tokens=50, output_tokens=5),
+        )
+
+    backend._client = cast(
+        Any, types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
+    )
+    history: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
+    completion = backend.complete(history, base.ToolContext(workdir=None), None)
+    assert completion.text == "visible reply"
+    assert completion.reasoning == "internal"
+    assert "internal" not in completion.text
+
+
 def test_complete_skips_breakpoints_when_sustained_idle() -> None:
     """Only sustained idleness strips markers; cold starts still attach."""
     backend = _wired_backend()
