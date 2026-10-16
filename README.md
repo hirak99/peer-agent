@@ -32,6 +32,16 @@ python -m service.server --model anthropic/claude-sonnet-5-5 --port 8471   # bal
 python -m service.server --model anthropic/claude-opus-5-5 --port 8471    # strongest, priciest
 ```
 
+Local OpenAI-dialect endpoint (llama.cpp, vLLM, Ollama):
+
+```sh
+python -m service.server --model local --base-url http://localhost:9931/v1 \
+  --context-window 150000 --port 8472
+# multi-model servers (Ollama, vLLM): select with an id, e.g.
+python -m service.server --model local/qwen3:32b --base-url http://localhost:11434/v1 \
+  --context-window 131072 --port 8472
+```
+
 Providers: `anthropic`, `openai` (hosted), `local` (any OpenAI-dialect
 endpoint — needs `--base-url`, e.g. `http://localhost:9931/v1`), `stub`.
 Single-model servers ignore the model field, so `--model local` alone
