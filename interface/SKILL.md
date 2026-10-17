@@ -72,6 +72,11 @@ also redirect with a new prompt or stop instead of continuing.
 - The peer works with files, runs commands, and fetches the web
   server-side — state the outcome you want, not the tool to use.
 - Long threads auto-compact (old turns → summary, recent kept).
+  When a turn compacts, the reply carries
+  `"compaction":{"reason": ...}` (`auto` headroom policy, `forced` you
+  asked, `overflow` provider rejected mid-turn); absent means no
+  compaction.
+  Re-prime dropped context with a follow-up when you see it.
   On failure just resend — the next turn compacts first.
   Manual/forced compaction: `POST /compact '{"conversation_id":"ID"}'`,
   or `"compact":true/false` per call.

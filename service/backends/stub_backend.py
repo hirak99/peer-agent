@@ -51,5 +51,6 @@ class StubBackend(base.Backend):
             meta["status"] = completion.status
             meta["hint"] = completion.hint
             meta["tool_turns"] = completion.tool_turns
+            meta["compaction"] = completion.compaction
         for word in completion.text.split(" "):
             yield word + " "

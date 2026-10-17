@@ -129,5 +129,6 @@ class Backend(abc.ABC):
             meta["tool_turns"] = completion.tool_turns
             meta["reasoning"] = completion.reasoning
             meta["truncated"] = completion.truncated
+            meta["compaction"] = completion.compaction
         for index in range(0, len(completion.text), 400):
             yield completion.text[index : index + 400]

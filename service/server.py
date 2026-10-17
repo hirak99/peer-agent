@@ -181,7 +181,7 @@ def build_app(
     def _health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/chat")
+    @app.post("/chat", response_model_exclude_unset=True)
     def _chat(request: models.ChatRequest) -> models.ChatResponse:
         conversation_id = chat_turn.resolve_id(conversations, request)
         with locks.for_id(conversation_id):
@@ -273,6 +273,11 @@ def build_app(
                                 "status": done["status"],
                                 "hint": done["hint"],
                                 "tool_turns": done["tool_turns"],
+                                **(
+                                    {"compaction": done["compaction"]}
+                                    if "compaction" in done
+                                    else {}
+                                ),
                             }
                         )
                         + "\n\n"

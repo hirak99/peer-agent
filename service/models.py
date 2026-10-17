@@ -52,6 +52,15 @@ class CompactResponse(pydantic.BaseModel):
     post_tokens_est: int | None = None
 
 
+class CompactionInfo(pydantic.BaseModel):
+    """Host-visible compaction signal; presence means compaction happened."""
+
+    # Why compaction ran: auto (headroom policy), forced (host asked this
+    # turn), overflow (provider rejected mid-turn). Manual compaction has
+    # its own endpoint and never appears here.
+    reason: Literal["auto", "forced", "overflow"]
+
+
 class ChatResponse(pydantic.BaseModel):
     """Body returned by POST /chat."""
 
@@ -67,3 +76,5 @@ class ChatResponse(pydantic.BaseModel):
     tool_turns: int = 0
     # Accumulated provider token counts, or None when unreported.
     usage: log_events.TokenUsage | None = None
+    # Compaction applied this turn, if any. Omitted when nothing happened.
+    compaction: CompactionInfo | None = None

@@ -347,6 +347,28 @@ def compact_conversation(
     }
 
 
+def _host_compaction_info(
+    proactive: base.CompactionRecord | None,
+    recovery: base.CompactionRecord | None,
+) -> models.CompactionInfo | None:
+    """Resolves the host-visible compaction signal for one turn.
+
+    The later (recovery) record wins when both exist; the host action is
+    identical either way, so no list is needed.
+    """
+    record = recovery if recovery is not None else proactive
+    if record is None:
+        return None
+    reason = record.reason
+    if reason == "error_recovery":
+        reason = "overflow"
+    elif reason == "margin":
+        reason = "auto"
+    if reason not in ("auto", "forced", "overflow"):
+        return None
+    return models.CompactionInfo(reason=reason)  # type: ignore[arg-type]
+
+
 def finish_turn(
     conversations: store.ConversationStore,
     events: event_log.EventLog,
@@ -374,6 +396,16 @@ def finish_turn(
         )
     conversations.save(state.conversation_id, state.history)
     log_completion(backend, events, state.conversation_id, completion)
+    info = _host_compaction_info(state.compaction, completion.compaction)
+    if info is None:
+        return models.ChatResponse(
+            text=completion.text,
+            conversation_id=state.conversation_id,
+            status=completion.status,  # type: ignore[arg-type]
+            hint=completion.hint,
+            tool_turns=completion.tool_turns,
+            usage=completion.usage,
+        )
     return models.ChatResponse(
         text=completion.text,
         conversation_id=state.conversation_id,
@@ -381,6 +413,7 @@ def finish_turn(
         hint=completion.hint,
         tool_turns=completion.tool_turns,
         usage=completion.usage,
+        compaction=info,
     )
 
 
@@ -423,9 +456,16 @@ def finish_stream_turn(
             tool_turns=tool_turns,
         ),
     )
-    return {
+    done: dict[str, Any] = {
         "conversation_id": state.conversation_id,
         "status": status,
         "hint": hint,
         "tool_turns": tool_turns,
     }
+    info = _host_compaction_info(
+        state.compaction,
+        record if isinstance(record, base.CompactionRecord) else None,
+    )
+    if info is not None:
+        done["compaction"] = {"reason": info.reason}
+    return done
