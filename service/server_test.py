@@ -195,6 +195,27 @@ def test_chat_stream(tmp_path: pathlib.Path) -> None:
     assert follow["conversation_id"] == done_id
 
 
+def test_chat_slash_prompt_is_400_without_storing(tmp_path: pathlib.Path) -> None:
+    """Slash-leading /chat prompts are rejected before any history write."""
+    client = _build_client(tmp_path)
+    # Even exact "/compact" is rejected here: the client routes it to
+    # POST /compact and never sends it to /chat.
+    for prompt in ("/compact", "/compcat", "/Compact", "/compact now"):
+        response = client.post(
+            "/chat", json={"prompt": prompt, "cwd": str(tmp_path)}
+        )
+        assert response.status_code == 400
+    assert list((tmp_path / "conversations").iterdir()) == []
+
+
+def test_chat_stream_slash_prompt_is_400(tmp_path: pathlib.Path) -> None:
+    """Slash-leading /chat/stream prompts fail fast with 400, not SSE."""
+    response = _build_client(tmp_path).post(
+        "/chat/stream", json={"prompt": "/compcat", "cwd": str(tmp_path)}
+    )
+    assert response.status_code == 400
+
+
 def test_concurrent_same_conversation_keeps_all_turns(tmp_path: pathlib.Path) -> None:
     """Simultaneous turns on one id serialize instead of losing updates."""
     backend = stub_backend.StubBackend()

@@ -49,6 +49,16 @@ _CONVERSATIONS_DIR = _PROJECT_ROOT / "conversations"
 _LOGS_DIR = _PROJECT_ROOT / "logs"
 
 
+def _reject_slash_prompt(prompt: str) -> None:
+    """Rejects slash-leading chat prompts so typos never clutter history."""
+    if prompt.strip().startswith("/"):
+        raise fastapi.HTTPException(
+            status_code=400,
+            detail="Slash commands are not valid chat prompts; "
+            "unknown command, not stored.",
+        )
+
+
 def build_default_registry(
     timeout_s: int = bash_tool.DEFAULT_BASH_TIMEOUT_S,
     max_bytes: int = bash_tool.DEFAULT_BASH_MAX_BYTES,
@@ -183,6 +193,7 @@ def build_app(
 
     @app.post("/chat", response_model_exclude_unset=True)
     def _chat(request: models.ChatRequest) -> models.ChatResponse:
+        _reject_slash_prompt(request.prompt)
         conversation_id = chat_turn.resolve_id(conversations, request)
         with locks.for_id(conversation_id):
             state = chat_turn.begin_turn(
@@ -213,6 +224,8 @@ def build_app(
     def _chat_stream(
         request: models.ChatRequest,
     ) -> fastapi.responses.StreamingResponse:
+        _reject_slash_prompt(request.prompt)
+
         def _generate() -> Iterator[str]:
             try:
                 conversation_id = chat_turn.resolve_id(conversations, request)

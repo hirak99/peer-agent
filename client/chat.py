@@ -115,12 +115,23 @@ def main() -> None:
     base_url = f"http://127.0.0.1:{args.port}"
     prompt = args.prompt
     # Slash-command dispatch (extend here for future commands).
-    if prompt.strip() == "/compact":
+    # Only exact matches run locally; any other slash-leading input is
+    # rejected here so a typo never reaches the server or clutters history.
+    stripped = prompt.strip()
+    if stripped == "/compact":
         if args.conversation_id is None:
             print("error: /compact requires --conversation-id", file=sys.stderr)
             sys.exit(2)
         _run_compact(base_url, args.conversation_id)
         return
+    if stripped.startswith("/"):
+        unknown = stripped.split()[0] if stripped.split() else "/"
+        print(
+            f"error: unknown command {unknown!r} (not sent). "
+            "Known commands: /compact",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     payload = _build_payload(args, prompt)
     first = True
     while True:
