@@ -21,4 +21,4 @@ class EventLog:
         with open(path, "a") as handle:
             handle.write(line + "\n")
         if self._verbose:
-            print(line, file=sys.stderr, flush=True)
+            print(f"{conversation_id} {line}", file=sys.stderr, flush=True)
