@@ -212,21 +212,16 @@ class AnthropicBackend(base.Backend):
 
     @staticmethod
     def _to_token_usage(usage: Any) -> log_events.TokenUsage:
-        prompt_tokens: int | None = getattr(usage, "input_tokens", None)
+        # Anthropic input_tokens is fresh-only; cache parts are separate.
+        fresh: int | None = getattr(usage, "input_tokens", None)
         completion_tokens: int | None = getattr(usage, "output_tokens", None)
         cached: int | None = getattr(usage, "cache_read_input_tokens", None)
         created: int | None = getattr(usage, "cache_creation_input_tokens", None)
         total_input_tokens: int | None = None
-        if (
-            prompt_tokens is not None
-            or cached is not None
-            or created is not None
-        ):
-            total_input_tokens = (
-                (prompt_tokens or 0) + (cached or 0) + (created or 0)
-            )
+        if fresh is not None or cached is not None or created is not None:
+            total_input_tokens = (fresh or 0) + (cached or 0) + (created or 0)
         return log_events.TokenUsage(
-            prompt_tokens=prompt_tokens,
+            fresh_input_tokens=fresh,
             completion_tokens=completion_tokens,
             cached_prompt_tokens=cached,
             cache_creation_input_tokens=created,

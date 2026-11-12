@@ -82,6 +82,33 @@ keepalive-vs-1h analysis.
 Watch `cached_prompt_tokens` vs `cache_creation_input_tokens` on `response`
 lines in `logs/`.
 
+## Logging
+
+All state is files under the repo, per conversation id:
+
+- `conversations/<id>.json` — live message history (what the next turn sends).
+- `conversations/<id>.meta.json` — system prompt plus the last billed input size driving auto-compaction.
+- `conversations/backups/<id>/` — pre-compaction history snapshots (newest 5).
+- `logs/<id>.jsonl` — append-only event stream, one JSON object per line:
+  `prompt`, `tool_call` / `tool_result`, `response`, `compaction`, and
+  `system_prompt` events. This is the audit trail: history can be compacted,
+  logs never are. Pass `--verbose` to also print each line to stderr live.
+
+`usage` on `response` lines uses the same names on every backend:
+
+| field | meaning |
+|---|---|
+| `total_input_tokens` | everything the model received as input: fresh + cache-read + cache-write. The window-relevant size. |
+| `fresh_input_tokens` | input computed fresh this call (excludes cache). |
+| `cached_prompt_tokens` | input served from cache. |
+| `cache_creation_input_tokens` | input written to cache (where the provider reports it). |
+| `completion_tokens` | output tokens. |
+
+Invariant: `fresh + cached + written = total_input_tokens` (single-call
+turns; multi-call tool turns accumulate cache counters, so divide by
+`tool_turns + 1` for a per-call estimate). `total_tokens` is removed; old
+log lines containing it still parse.
+
 
 ## Chat
 
@@ -102,7 +129,7 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 ## Compaction
 
 Long threads auto-compact: when the last billed input reaches
-`--compact-trigger-tokens` (exact `prompt_tokens`, no reserve or margin),
+`--compact-trigger-tokens` (exact `total_input_tokens`, no reserve or margin),
 old turns are summarized and replaced, keeping the last
 `--compact-keep-messages` (default 20). Without a trigger, the fallback
 window formula applies: `est_history + max_output_tokens +

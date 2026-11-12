@@ -98,13 +98,18 @@ class ConversationStore:
         """Records the active system prompt for change detection."""
         self._write_meta(conversation_id, {"system_prompt": system_prompt})
 
-    def load_last_prompt_tokens(self, conversation_id: str) -> int | None:
+    def load_last_input_tokens(self, conversation_id: str) -> int | None:
         """Loads the last billed input size, or None when never recorded."""
-        tokens = self._read_meta(conversation_id).get("last_prompt_tokens")
-        return tokens if isinstance(tokens, int) else None
+        meta = self._read_meta(conversation_id)
+        # New key first; pre-rename metas stored last_prompt_tokens.
+        for key in ("last_input_tokens", "last_prompt_tokens"):
+            tokens = meta.get(key)
+            if isinstance(tokens, int):
+                return tokens
+        return None
 
-    def save_last_prompt_tokens(
-        self, conversation_id: str, prompt_tokens: int
+    def save_last_input_tokens(
+        self, conversation_id: str, total_input_tokens: int
     ) -> None:
         """Records the last billed input size for the trigger decision."""
-        self._write_meta(conversation_id, {"last_prompt_tokens": prompt_tokens})
+        self._write_meta(conversation_id, {"last_input_tokens": total_input_tokens})

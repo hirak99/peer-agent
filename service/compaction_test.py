@@ -386,12 +386,12 @@ class _UsageStubBackend(stub_backend.StubBackend):
 
     def __init__(
         self,
-        prompt_tokens: int,
+        fresh_tokens: int,
         cached_tokens: int | None = None,
         cache_creation_tokens: int | None = None,
         total_input_tokens: int | None = None,
     ) -> None:
-        self._prompt_tokens = prompt_tokens
+        self._fresh_tokens = fresh_tokens
         self._cached_tokens = cached_tokens
         self._cache_creation_tokens = cache_creation_tokens
         self._total_input_tokens = total_input_tokens
@@ -407,7 +407,7 @@ class _UsageStubBackend(stub_backend.StubBackend):
             messages, context, host_max_tool_turns, on_tool_event
         )
         completion.usage = log_events.TokenUsage(
-            prompt_tokens=self._prompt_tokens,
+            fresh_input_tokens=self._fresh_tokens,
             completion_tokens=10,
             cached_prompt_tokens=self._cached_tokens,
             cache_creation_input_tokens=self._cache_creation_tokens,
@@ -455,7 +455,7 @@ def test_trigger_compacts_when_last_billed_reaches_threshold(
     client, conversations = _trigger_client(tmp_path, _UsageStubBackend(50), 100)
     cid = _seed_turns(client, tmp_path, "one", "two", "three")
     # Simulate a heavy billed turn; the backend itself reports small usage.
-    conversations.save_last_prompt_tokens(cid, 150)
+    conversations.save_last_input_tokens(cid, 150)
     body: dict[str, Any] = client.post(
         "/chat",
         json={"prompt": "four", "conversation_id": cid, "cwd": str(tmp_path)},
@@ -472,7 +472,7 @@ def test_trigger_below_threshold_skips_compaction(tmp_path: pathlib.Path) -> Non
     """Last prompt_tokens under the trigger leaves history untouched."""
     client, conversations = _trigger_client(tmp_path, _UsageStubBackend(50), 100)
     cid = _seed_turns(client, tmp_path, "one", "two", "three")
-    conversations.save_last_prompt_tokens(cid, 60)
+    conversations.save_last_input_tokens(cid, 60)
     body: dict[str, Any] = client.post(
         "/chat",
         json={"prompt": "four", "conversation_id": cid, "cwd": str(tmp_path)},
@@ -511,11 +511,11 @@ def test_trigger_with_usage_never_warns(tmp_path: pathlib.Path, caplog: Any) -> 
     assert len(warnings) == 1
 
 
-def test_last_prompt_tokens_persisted_per_turn(tmp_path: pathlib.Path) -> None:
+def test_last_input_tokens_persisted_per_turn(tmp_path: pathlib.Path) -> None:
     """Each finished turn records its billed input for the next decision."""
     client, conversations = _trigger_client(tmp_path, _UsageStubBackend(123), 10**9)
     cid = _seed_turns(client, tmp_path, "one", "two")
-    assert conversations.load_last_prompt_tokens(cid) == 123
+    assert conversations.load_last_input_tokens(cid) == 123
 
 
 def test_missing_usage_leaves_last_tokens_unset(tmp_path: pathlib.Path) -> None:
@@ -524,31 +524,31 @@ def test_missing_usage_leaves_last_tokens_unset(tmp_path: pathlib.Path) -> None:
         tmp_path, stub_backend.StubBackend(), 10**9
     )
     cid = _seed_turns(client, tmp_path, "one")
-    assert conversations.load_last_prompt_tokens(cid) is None
+    assert conversations.load_last_input_tokens(cid) is None
 
 
 def test_remembered_usage_is_total_input(tmp_path: pathlib.Path) -> None:
-    """Fresh-only prompt_tokens must not hide cache-read/write volume."""
+    """Provider-exact input must not hide cache-read/write volume."""
     conversations = store.ConversationStore(tmp_path / "conversations")
     # Shape of a cache-hot Anthropic turn: 2 fresh + 671k read + 339k write.
     chat_turn._remember_last_usage(
         conversations,
         "cid",
         log_events.TokenUsage(
-            prompt_tokens=2,
+            fresh_input_tokens=2,
             completion_tokens=2875,
             cached_prompt_tokens=671736,
             cache_creation_input_tokens=339307,
         ),
     )
-    assert conversations.load_last_prompt_tokens("cid") == 671736 + 339307
-    # OpenAI-style inclusive counts: cached is a subset, never double-count.
+    assert conversations.load_last_input_tokens("cid") == 671736 + 339307
+    # Fresh + cached hand-built: fallback keeps the max, never undercounts.
     chat_turn._remember_last_usage(
         conversations,
         "cid2",
-        log_events.TokenUsage(prompt_tokens=617, cached_prompt_tokens=512),
+        log_events.TokenUsage(fresh_input_tokens=617, cached_prompt_tokens=512),
     )
-    assert conversations.load_last_prompt_tokens("cid2") == 617
+    assert conversations.load_last_input_tokens("cid2") == 617
 
 
 def test_remembered_usage_prefers_total_input(tmp_path: pathlib.Path) -> None:
@@ -558,23 +558,23 @@ def test_remembered_usage_prefers_total_input(tmp_path: pathlib.Path) -> None:
         conversations,
         "cid",
         log_events.TokenUsage(
-            prompt_tokens=4,
+            fresh_input_tokens=4,
             cached_prompt_tokens=0,
             cache_creation_input_tokens=342226,
             total_input_tokens=342230,
         ),
     )
-    assert conversations.load_last_prompt_tokens("cid") == 342230
+    assert conversations.load_last_input_tokens("cid") == 342230
 
 
 def test_cache_hot_turn_trips_trigger_next_turn(tmp_path: pathlib.Path) -> None:
     """A 1M-context turn compacts the turn after, not never."""
     backend = _UsageStubBackend(
-        prompt_tokens=5, cached_tokens=900, cache_creation_tokens=100
+        fresh_tokens=5, cached_tokens=900, cache_creation_tokens=100
     )
     client, conversations = _trigger_client(tmp_path, backend, 1000)
     cid = _seed_turns(client, tmp_path, "one", "two", "three")
-    assert conversations.load_last_prompt_tokens(cid) == 1000
+    assert conversations.load_last_input_tokens(cid) == 1000
     body: dict[str, Any] = client.post(
         "/chat",
         json={"prompt": "four", "conversation_id": cid, "cwd": str(tmp_path)},

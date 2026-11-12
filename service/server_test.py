@@ -331,7 +331,7 @@ def test_old_response_lines_parse_without_total_input() -> None:
             "type": "response",
             "text": "hi",
             "usage": {
-                "prompt_tokens": 4,
+                "fresh_input_tokens": 4,
                 "completion_tokens": 47,
                 "cached_prompt_tokens": 384,
                 "cache_creation_input_tokens": None,

@@ -250,8 +250,13 @@ class OpenAICompatBackend(base.Backend):
             cached_tokens = getattr(details, "cached_tokens", None)
             if isinstance(cached_tokens, int):
                 cached = cached_tokens
+        # Provider prompt_tokens totals input (cached is a subset); fresh
+        # is the remainder, clamped at zero against inconsistent reports.
+        fresh: int | None = None
+        if prompt_tokens is not None:
+            fresh = max(0, prompt_tokens - (cached or 0))
         return log_events.TokenUsage(
-            prompt_tokens=prompt_tokens,
+            fresh_input_tokens=fresh,
             completion_tokens=completion_tokens,
             cached_prompt_tokens=cached,
             cache_creation_input_tokens=None,

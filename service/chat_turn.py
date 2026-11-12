@@ -147,17 +147,14 @@ def _remember_last_usage(
     total = usage.total_input_tokens
     if total is None:
         # Hand-built usages (tests, future backends): estimate defensively.
-        # Backends disagree on whether prompt_tokens includes cached input:
-        # Anthropic reports fresh-only input_tokens beside cache_read/write,
-        # OpenAI-dialect reports total input with cached as a subset. The max
-        # is exact for inclusive backends and within fresh-tokens for
-        # exclusive ones; either way it never undercounts into silence.
+        # fresh_input_tokens is cache-excluded on every backend, so the max
+        # with the cache columns never undercounts into silence.
         cached = (usage.cached_prompt_tokens or 0) + (
             usage.cache_creation_input_tokens or 0
         )
-        total = max(usage.prompt_tokens or 0, cached)
+        total = max(usage.fresh_input_tokens or 0, cached)
     if total:
-        conversations.save_last_prompt_tokens(conversation_id, total)
+        conversations.save_last_input_tokens(conversation_id, total)
 
 
 def record_tool_event(
@@ -251,7 +248,7 @@ def _maybe_compact_proactive(
     config: compaction.CompactionConfig | None,
     history: list[dict[str, Any]],
     prompt: str,
-    last_prompt_tokens: int | None,
+    last_input_tokens: int | None,
     conversation_id: str,
     forced: bool,
 ) -> base.CompactionRecord | None:
@@ -267,9 +264,9 @@ def _maybe_compact_proactive(
     active = config or compaction.CompactionConfig()
     keep = compaction.resolve_keep(active)
     trigger = active.trigger_tokens
-    if not forced and trigger is not None and last_prompt_tokens is not None:
+    if not forced and trigger is not None and last_input_tokens is not None:
         # Exact path: last billed input decides, no reserve or margin.
-        if last_prompt_tokens < trigger:
+        if last_input_tokens < trigger:
             history.append({"role": "user", "content": prompt})
             return None
         old, recent = compaction.split_for_compaction(history, keep)
@@ -279,7 +276,7 @@ def _maybe_compact_proactive(
         record = _splice_summary(backend, active, history, old, recent, "margin")
         history.append({"role": "user", "content": prompt})
         return record
-    if not forced and trigger is not None and last_prompt_tokens is None:
+    if not forced and trigger is not None and last_input_tokens is None:
         _logger.warning(
             "No billed usage recorded for conversation %s with "
             "trigger_tokens=%s; falling back to chars/4 estimate "
@@ -324,8 +321,8 @@ def begin_turn(
     ):
         raise fastapi.HTTPException(status_code=404, detail="Unknown conversation_id.")
     history = conversations.load(conversation_id) if request.conversation_id else []
-    last_prompt_tokens = (
-        conversations.load_last_prompt_tokens(conversation_id)
+    last_input_tokens = (
+        conversations.load_last_input_tokens(conversation_id)
         if request.conversation_id
         else None
     )
@@ -342,7 +339,7 @@ def begin_turn(
             compaction_config,
             history,
             request.prompt,
-            last_prompt_tokens,
+            last_input_tokens,
             conversation_id,
             forced=request.compact is True,
         )

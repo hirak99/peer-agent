@@ -70,7 +70,7 @@ def _usage(
     total_input: int | None = None,
 ) -> log_events.TokenUsage:
     return log_events.TokenUsage(
-        prompt_tokens=prompt,
+        fresh_input_tokens=prompt,
         completion_tokens=1,
         cached_prompt_tokens=cached,
         cache_creation_input_tokens=created,
@@ -84,7 +84,7 @@ def test_accumulate_keeps_latest_total_input() -> None:
     second = _usage(2, cached=600, created=10, total_input=612)
     merged = tool_loop.accumulate_usage(first, second)
     assert merged is not None
-    assert merged.prompt_tokens == 2
+    assert merged.fresh_input_tokens == 2
     assert merged.total_input_tokens == 612
     # Cache counters still sum for cost accounting.
     assert merged.cached_prompt_tokens == 600
@@ -96,4 +96,4 @@ def test_accumulate_tolerates_missing_total_input() -> None:
     merged = tool_loop.accumulate_usage(_usage(10), _usage(20))
     assert merged is not None
     assert merged.total_input_tokens is None
-    assert merged.prompt_tokens == 20
+    assert merged.fresh_input_tokens == 20

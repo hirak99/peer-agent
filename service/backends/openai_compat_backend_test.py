@@ -149,7 +149,7 @@ def test_complete_runs_tool_loop() -> None:
     assert len(completion.tool_events) == 1
     assert completion.tool_events[0].name == "bash"
     assert completion.usage is not None
-    assert completion.usage.prompt_tokens == 10
+    assert completion.usage.fresh_input_tokens == 10
 
 
 def test_large_tool_notice_persists_into_next_request(tmp_path: pathlib.Path) -> None:
@@ -283,6 +283,7 @@ def test_to_token_usage_reports_total_input() -> None:
     )
     mapped = openai_compat_backend.OpenAICompatBackend._to_token_usage(usage)
     assert mapped.total_input_tokens == 617
+    assert mapped.fresh_input_tokens == 617 - 512
     assert mapped.cached_prompt_tokens == 512
     # The provider's own total is dropped, not passed through.
     assert getattr(mapped, "total_tokens", None) is None

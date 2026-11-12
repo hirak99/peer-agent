@@ -143,7 +143,9 @@ def accumulate_usage(
     if total is None:
         return latest
     prompt = (
-        latest.prompt_tokens if latest.prompt_tokens is not None else total.prompt_tokens
+        latest.fresh_input_tokens
+        if latest.fresh_input_tokens is not None
+        else total.fresh_input_tokens
     )
     completion = (total.completion_tokens or 0) + (latest.completion_tokens or 0)
     cached = None
@@ -160,14 +162,14 @@ def accumulate_usage(
         created = (total.cache_creation_input_tokens or 0) + (
             latest.cache_creation_input_tokens or 0
         )
-    # Input size is per-call, so the latest call wins (as with prompt_tokens).
+    # Input size is per-call, so the latest call wins.
     total_input = (
         latest.total_input_tokens
         if latest.total_input_tokens is not None
         else total.total_input_tokens
     )
     return log_events.TokenUsage(
-        prompt_tokens=prompt,
+        fresh_input_tokens=prompt,
         completion_tokens=completion,
         cached_prompt_tokens=cached,
         cache_creation_input_tokens=created,

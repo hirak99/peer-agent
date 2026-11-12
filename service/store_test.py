@@ -49,21 +49,21 @@ def test_meta_merges_system_prompt_and_last_tokens(tmp_path: pathlib.Path) -> No
     """System prompt and billed-usage writes share one meta file."""
     conversations = store.ConversationStore(tmp_path / "conversations")
     conversations.save_system_prompt("cid", "sys")
-    conversations.save_last_prompt_tokens("cid", 150)
+    conversations.save_last_input_tokens("cid", 150)
     assert conversations.load_system_prompt("cid") == "sys"
-    assert conversations.load_last_prompt_tokens("cid") == 150
+    assert conversations.load_last_input_tokens("cid") == 150
     # The older single-key writer must not wipe the newer key.
     conversations.save_system_prompt("cid", "sys2")
     assert conversations.load_system_prompt("cid") == "sys2"
-    assert conversations.load_last_prompt_tokens("cid") == 150
+    assert conversations.load_last_input_tokens("cid") == 150
 
 
 def test_last_tokens_missing_or_corrupt_reads_none(tmp_path: pathlib.Path) -> None:
     """Unknown conversations and bad meta files fall back, not crash."""
     conversations = store.ConversationStore(tmp_path / "conversations")
-    assert conversations.load_last_prompt_tokens("nope") is None
+    assert conversations.load_last_input_tokens("nope") is None
     meta = tmp_path / "conversations" / "bad.meta.json"
     meta.parent.mkdir(parents=True, exist_ok=True)
     meta.write_text("not json{")
-    assert conversations.load_last_prompt_tokens("bad") is None
+    assert conversations.load_last_input_tokens("bad") is None
     assert conversations.load_system_prompt("bad") is None

@@ -124,11 +124,11 @@ class OpenAICloudBackend(openai_compat_backend.OpenAICompatBackend):
             if isinstance(tokens, int):
                 written = tokens
         return log_events.TokenUsage(
-            prompt_tokens=base_usage.prompt_tokens,
+            fresh_input_tokens=base_usage.fresh_input_tokens,
             completion_tokens=base_usage.completion_tokens,
             cached_prompt_tokens=base_usage.cached_prompt_tokens,
             cache_creation_input_tokens=written,
-            total_input_tokens=base_usage.prompt_tokens,
+            total_input_tokens=base_usage.total_input_tokens,
         )
 
     @override

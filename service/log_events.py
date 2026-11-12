@@ -17,8 +17,8 @@ class BaseEvent(pydantic.BaseModel):
 class TokenUsage(pydantic.BaseModel):
     """Provider-reported token counts, None fields when unreported."""
 
-    # Tokens sent (Anthropic input_tokens).
-    prompt_tokens: int | None = None
+    # Tokens computed fresh this call (excludes cache on all backends).
+    fresh_input_tokens: int | None = None
     # Tokens generated (Anthropic output_tokens).
     completion_tokens: int | None = None
     # Prompt tokens served from cache (Anthropic cache_read_input_tokens).

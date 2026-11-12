@@ -48,7 +48,7 @@ class CompactionConfig:
     # Manual window override (tests, wrong metadata); else backend value.
     context_window_override: int | None = None
     # Exact billed-input trigger: compact when the last turn's
-    # prompt_tokens reached this. No reserve, margin, or estimation.
+    # total_input_tokens reached this. No reserve, margin, or estimation.
     # Beats the window formula when set and exact counts exist.
     trigger_tokens: int | None = None
 
