@@ -8,6 +8,7 @@ import time
 import pydantic
 from fastapi import testclient
 
+from service import compaction
 from service import event_log
 from service import log_events
 from service import server
@@ -262,3 +263,38 @@ def test_concurrent_same_conversation_keeps_all_turns(tmp_path: pathlib.Path) ->
         message["content"] for message in saved if message["role"] == "user"
     )
     assert prompts == sorted(["seed", "p0", "p1", "p2", "p3"])
+
+
+def test_renamed_flags_parse_to_new_dests() -> None:
+    """New names land on new dests; old aliases still parse."""
+    assert server._build_parser().parse_args(["--max-output-tokens", "100"]).max_output_tokens == 100
+    assert server._build_parser().parse_args(["--max-tokens", "100"]).max_tokens == 100
+    assert server._build_parser().parse_args(["--model-context-window", "10"]).model_context_window == 10
+    assert server._build_parser().parse_args(["--context-window", "10"]).context_window == 10
+    assert server._build_parser().parse_args(["--compact-trigger-tokens", "300000"]).compact_trigger_tokens == 300000
+    assert server._build_parser().parse_args([]).compact_trigger_tokens is None
+
+
+def test_resolve_renamed_new_wins_old_warns(caplog: Any) -> None:
+    """New flag wins conflicts; old flag warns; neither gives default."""
+    with caplog.at_level("WARNING"):
+        assert server._resolve_renamed(1, 2, 3, "--old", "--new") == 1
+    assert "--old is deprecated; use --new." in caplog.text
+    assert server._resolve_renamed(None, 2, 3, "--old", "--new") == 2
+    assert server._resolve_renamed(None, None, 3, "--old", "--new") == 3
+
+
+def test_trigger_wired_end_to_end(tmp_path: pathlib.Path) -> None:
+    """A parsed --compact-trigger-tokens reaches the compaction config."""
+    args = server._build_parser().parse_args(["--compact-trigger-tokens", "300000"])
+    assert args.compact_trigger_tokens == 300000
+    conversations = store.ConversationStore(tmp_path / "conversations")
+    events = event_log.EventLog(tmp_path / "logs")
+    config = compaction.CompactionConfig(trigger_tokens=args.compact_trigger_tokens)
+    app = server.build_app(
+        stub_backend.StubBackend(), conversations, events, "sys", compaction_config=config
+    )
+    body: dict[str, Any] = testclient.TestClient(app).post(
+        "/chat", json={"prompt": "hi", "cwd": str(tmp_path)}
+    ).json()
+    assert "compaction" not in body  # below trigger, no false positive

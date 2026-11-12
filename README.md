@@ -48,10 +48,10 @@ Local OpenAI-dialect endpoint (llama.cpp, vLLM, Ollama):
 
 ```sh
 python -m service.server --model local --base-url http://localhost:9931/v1 \
-  --context-window 150000 --compact-in-context --port 8472
+  --model-context-window 150000 --compact-in-context --port 8472
 # multi-model servers (Ollama, vLLM): select with an id, e.g.
 python -m service.server --model local/qwen3:32b --base-url http://localhost:11434/v1 \
-  --context-window 131072 --compact-in-context --port 8472
+  --model-context-window 131072 --compact-in-context --port 8472
 ```
 `--compact-in-context` compacts via a transient in-context turn (warm KV
 cache) with fallback to a separate summarize call — see
@@ -64,7 +64,7 @@ suffices (an alias like `local/qwen` is passed through and logged).
 API keys come from provider env vars (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `LOCAL_MODEL_API_KEY`); `--api-key-env NAME` overrides
 with another variable. Providers without a metadata API take
-`--context-window` for the compaction budget.
+`--model-context-window` for the true input budget.
 
 The active model is recorded on every `response` line in `logs/`, so a
 mid-thread model switch stays attributable.
@@ -101,13 +101,19 @@ curl -s localhost:8471/chat -H 'content-type: application/json' \
 
 ## Compaction
 
-Long threads auto-compact: when `est_history + max_tokens + effective_margin`
-exceeds the model's input budget (read from the Models API at startup, 1M for
-current Claude 5.5 models), old turns are summarized and replaced, keeping the
-last `--compact-keep-messages` (default 20). The effective margin is
-`max(--compact-margin-tokens, 5% of window)`, so the fixed default (20000)
-scales up on large-context models. Full history stays in `logs/`;
-compactions are logged as `compaction` events. Per-turn override:
+Long threads auto-compact: when the last billed input reaches
+`--compact-trigger-tokens` (exact `prompt_tokens`, no reserve or margin),
+old turns are summarized and replaced, keeping the last
+`--compact-keep-messages` (default 20). Without a trigger, the fallback
+window formula applies: `est_history + max_output_tokens +
+effective_margin` exceeding the model's input budget (read from the Models
+API at startup, 1M for current Claude 5.5 models), where `est_history` is
+a `chars/4` heuristic and the effective margin is
+`max(--compact-margin-tokens, 5% of window)`. Full history stays in `logs/`;
+compactions are logged as `compaction` events. When the trigger is set but
+no billed usage exists yet (first turn, or backends that report none), the
+server warns on stderr and falls back to the window formula for that turn.
+Per-turn override:
 `{"compact": true/false}`. Manual, no model turn: `POST /compact
 {"conversation_id": "..."}` (CLI: `python client/chat.py "/compact"
 --conversation-id <id> --port 8471`). On context-overflow the turn
@@ -115,8 +121,10 @@ retries once after compaction instead of failing. Slow-prefill local
 models should pass `--compact-in-context` (warm-cache summaries, silent
 fallback). See [docs/compaction.md](docs/compaction.md) for paths, trade-offs, and all knobs.
 Server knobs:
+`--compact-trigger-tokens` (e.g. 300000 to compact a large model early),
 `--compact-model` (e.g. haiku for cheap summaries), `--compact-summary-max-tokens`,
-`--compact-context-window`, `--compact-in-context`.
+`--max-output-tokens` (per-call output budget, also the window-formula reserve),
+`--compact-in-context`.
 
 ## Skill (Option A)
 

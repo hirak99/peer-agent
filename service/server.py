@@ -315,8 +315,25 @@ def build_app(
     return app
 
 
-def main() -> None:
-    """Serves the peer agent over loopback HTTP."""
+def _resolve_renamed(
+    new_value: int | None,
+    old_value: int | None,
+    default: int | None,
+    old_flag: str,
+    new_flag: str,
+) -> int | None:
+    """Resolves a renamed flag: new wins, old warns, else the default."""
+    if old_value is not None:
+        logging.warning("%s is deprecated; use %s.", old_flag, new_flag)
+    if new_value is not None:
+        return new_value
+    if old_value is not None:
+        return old_value
+    return default
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Builds the service CLI parser (extracted for tests)."""
     parser = argparse.ArgumentParser(description="Peer-agent chat service.")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
@@ -335,10 +352,17 @@ def main() -> None:
         help="Env var holding the model API key; overrides the provider default.",
     )
     parser.add_argument(
+        "--model-context-window",
+        type=int,
+        default=None,
+        help="True model input budget for providers without a metadata "
+        "API (local). Anthropic ignores it (window comes from the API).",
+    )
+    parser.add_argument(
         "--context-window",
         type=int,
         default=None,
-        help="Input budget for providers without a metadata API (local).",
+        help="Deprecated alias of --model-context-window.",
     )
     parser.add_argument("--system-prompt", default=_DEFAULT_SYSTEM_PROMPT)
     parser.add_argument(
@@ -347,7 +371,17 @@ def main() -> None:
         default=anthropic_backend.DEFAULT_HOST_MAX_TOOL_TURNS,
     )
     parser.add_argument(
-        "--max-tokens", type=int, default=anthropic_backend.DEFAULT_MAX_TOKENS
+        "--max-output-tokens",
+        type=int,
+        default=None,
+        help="Per-call output budget sent to the provider; also the "
+        "compaction reserve (room left for the reply being requested).",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Deprecated alias of --max-output-tokens.",
     )
     parser.add_argument(
         "--bash-timeout", type=int, default=bash_tool.DEFAULT_BASH_TIMEOUT_S
@@ -376,8 +410,28 @@ def main() -> None:
         type=int,
         default=anthropic_backend.DEFAULT_COMPACT_SUMMARY_MAX_TOKENS,
     )
+    parser.add_argument(
+        "--compact-trigger-tokens",
+        type=int,
+        default=None,
+        help="Compact when the last billed input reaches this size. "
+        "No reserve, margin, or estimation; beats the window formula. "
+        "Needs provider usage (warns and falls back otherwise).",
+    )
     parser.add_argument("--compact-model", default=None)
-    parser.add_argument("--compact-context-window", type=int, default=None)
+    parser.add_argument(
+        "--compact-context-window",
+        type=int,
+        default=None,
+        help="Deprecated: pretend the model is this small. To compact a "
+        "large model early, use --compact-trigger-tokens instead.",
+    )
+    parser.add_argument(
+        "--compact-window-override",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument(
         "--compact-in-context",
         action="store_true",
@@ -390,15 +444,42 @@ def main() -> None:
         action="store_true",
         help="Print each log event (the exact JSONL line) to stderr live.",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    """Serves the peer agent over loopback HTTP."""
+    args = _build_parser().parse_args()
     logging.basicConfig(level=logging.INFO)
     dotenv.load_dotenv(_PROJECT_ROOT / ".env")
+    max_tokens = _resolve_renamed(
+        args.max_output_tokens,
+        args.max_tokens,
+        anthropic_backend.DEFAULT_MAX_TOKENS,
+        "--max-tokens",
+        "--max-output-tokens",
+    )
+    assert max_tokens is not None
+    context_window = _resolve_renamed(
+        args.model_context_window,
+        args.context_window,
+        None,
+        "--context-window",
+        "--model-context-window",
+    )
+    compact_window_override = _resolve_renamed(
+        args.compact_window_override,
+        args.compact_context_window,
+        None,
+        "--compact-context-window",
+        "--compact-trigger-tokens or --compact-window-override",
+    )
     app = build_app(
         build_backend(
             args.model,
             args.system_prompt,
             host_max_tool_turns=args.host_max_tool_turns,
-            max_tokens=args.max_tokens,
+            max_tokens=max_tokens,
             bash_timeout_s=args.bash_timeout,
             bash_max_bytes=args.bash_max_bytes,
             web_timeout_s=args.web_timeout,
@@ -408,7 +489,7 @@ def main() -> None:
             compact_keep_messages=args.compact_keep_messages,
             base_url=args.base_url,
             api_key_env=args.api_key_env,
-            context_window=args.context_window,
+            context_window=context_window,
         ),
         store.ConversationStore(_CONVERSATIONS_DIR),
         event_log.EventLog(_LOGS_DIR, verbose=args.verbose),
@@ -417,7 +498,8 @@ def main() -> None:
         compaction_config=compaction.CompactionConfig(
             margin_tokens=args.compact_margin_tokens,
             keep_messages=args.compact_keep_messages,
-            context_window_override=args.compact_context_window,
+            context_window_override=compact_window_override,
+            trigger_tokens=args.compact_trigger_tokens,
             in_context=args.compact_in_context,
         ),
     )

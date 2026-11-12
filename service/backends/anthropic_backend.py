@@ -20,7 +20,7 @@ _ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
 # continuation_required instead of crashing. Per-request host_max_tool_turns
 # overrides; None (default) means unlimited.
 DEFAULT_HOST_MAX_TOOL_TURNS: int | None = None
-# Default per-turn output budget; override with --max-tokens.
+# Default per-turn output budget; override with --max-output-tokens.
 DEFAULT_MAX_TOKENS = 8192
 # Default token budget for the compaction summary reply.
 DEFAULT_COMPACT_SUMMARY_MAX_TOKENS = 8000

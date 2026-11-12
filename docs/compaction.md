@@ -32,14 +32,39 @@ compaction prompt is already in cache, so summaries come back in seconds
 instead of re-prefilling tens of thousands of tokens cold. Raise
 `--compact-margin-tokens` if summaries ever flirt with overflow.
 
+## When compaction fires
+
+**Trigger (exact, preferred).** `--compact-trigger-tokens N` compacts
+before a turn when the last billed input reached N. The billed count
+(`response.usage.prompt_tokens`, persisted per conversation) already
+includes system prompt, tool schemas, and real tokenization — no reserve,
+margin, or estimation is subtracted. Example: `--compact-trigger-tokens
+300000` on a 1M model compacts early at exactly 300k billed.
+
+**Window formula (fallback).** Without a trigger (or when no billed
+usage exists yet — first turn, or backends that report none),
+`est_history + max_output_tokens + effective_margin > window` decides,
+where `est_history` is a `chars/4` heuristic over stored messages and the
+effective margin is `max(--compact-margin-tokens, 5% of window)`. The
+server logs a stderr warning whenever it falls back to the estimate while
+a trigger is set. Providers without a metadata API take their true input
+budget from `--model-context-window`; Anthropic reads it from the Models
+API at startup.
+
 ## Knobs
 
+`--compact-trigger-tokens` (exact billed-input threshold; beats the
+window formula, no reserve/margin subtracted),
 `--compact-keep-messages` (default 20, tool-pair-safe split),
 `--compact-margin-tokens` (default 20000; effective margin is
-`max(margin, 5% of window)`), `--compact-model`,
+`max(margin, 5% of window)`; window-formula only), `--compact-model`,
 `--compact-summary-max-tokens` (default 8000),
-`--compact-context-window`,
-`--compact-in-context`. Per-turn: `{"compact": true}` forces,
+`--max-output-tokens` (default 8192; per-call output budget, also the
+window-formula reserve), `--model-context-window` (true input budget for
+providers without a metadata API),
+`--compact-in-context`. Deprecated aliases `--max-tokens`,
+`--context-window`, `--compact-context-window` still parse with a stderr
+warning. Per-turn: `{"compact": true}` forces,
 `{"compact": false}` inhibits. Manual: `POST /compact
 {"conversation_id": "..."}` (CLI: `python client/chat.py "/compact"
 --conversation-id <id>`).
