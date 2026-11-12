@@ -347,5 +347,7 @@ def test_old_response_lines_parse_without_total_input() -> None:
     assert isinstance(new, log_events.ResponseEvent)
     assert new.usage is not None
     assert new.usage.total_input_tokens == 871
+    # Deprecated total_tokens is still emitted for compatibility.
+    assert new.usage.total_tokens == 51
     # And the JSON round-trip the logs actually store.
     assert adapter.validate_json(new.model_dump_json()).usage == new.usage

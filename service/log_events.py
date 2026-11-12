@@ -21,7 +21,10 @@ class TokenUsage(pydantic.BaseModel):
     prompt_tokens: int | None = None
     # Tokens generated (Anthropic output_tokens).
     completion_tokens: int | None = None
-    # Sum, when the provider reports it (else None).
+    # Sum, when the provider reports it (else None). Deprecated: this is
+    # fresh-in + out only and excludes cache, so it misleads on cached
+    # turns; prefer total_input_tokens (+ completion_tokens for output).
+    # Kept emitting for provider/host compatibility.
     total_tokens: int | None = None
     # Prompt tokens served from cache (Anthropic cache_read_input_tokens).
     cached_prompt_tokens: int | None = None
