@@ -298,3 +298,54 @@ def test_trigger_wired_end_to_end(tmp_path: pathlib.Path) -> None:
         "/chat", json={"prompt": "hi", "cwd": str(tmp_path)}
     ).json()
     assert "compaction" not in body  # below trigger, no false positive
+
+
+def test_old_response_lines_parse_without_total_input() -> None:
+    """Pre-field logs load; the new input total defaults to None."""
+    adapter = pydantic.TypeAdapter(log_events.LogEvent)
+    old = adapter.validate_python(
+        {
+            "type": "response",
+            "text": "hi",
+            "usage": {
+                "prompt_tokens": 331926,
+                "completion_tokens": 4451,
+                "total_tokens": 336377,
+                "cached_prompt_tokens": 0,
+                "cache_creation_input_tokens": 0,
+            },
+            "model": "claude-opus-5-5",
+            "backend": "anthropic",
+            "status": "done",
+            "tool_turns": 0,
+            "reasoning": None,
+        }
+    )
+    assert isinstance(old, log_events.ResponseEvent)
+    assert old.usage is not None
+    assert old.usage.total_tokens == 336377
+    assert old.usage.total_input_tokens is None
+    new = adapter.validate_python(
+        {
+            "type": "response",
+            "text": "hi",
+            "usage": {
+                "prompt_tokens": 4,
+                "completion_tokens": 47,
+                "total_tokens": 51,
+                "cached_prompt_tokens": 384,
+                "cache_creation_input_tokens": None,
+                "total_input_tokens": 871,
+            },
+            "model": "local",
+            "backend": "local",
+            "status": "done",
+            "tool_turns": 0,
+            "reasoning": None,
+        }
+    )
+    assert isinstance(new, log_events.ResponseEvent)
+    assert new.usage is not None
+    assert new.usage.total_input_tokens == 871
+    # And the JSON round-trip the logs actually store.
+    assert adapter.validate_json(new.model_dump_json()).usage == new.usage

@@ -2,6 +2,7 @@
 
 import pytest
 
+from service import log_events
 from service.backends import base
 from service.backends import tool_loop
 from service.tools import registry
@@ -60,3 +61,40 @@ def test_large_truncated_unicode_output_gets_one_notice() -> None:
     )
     assert executed[0][2].count("[note:") == 1
     assert executed[0][2].count("<truncated,") == 1
+
+
+def _usage(
+    prompt: int | None,
+    cached: int | None = None,
+    created: int | None = None,
+    total_input: int | None = None,
+) -> log_events.TokenUsage:
+    return log_events.TokenUsage(
+        prompt_tokens=prompt,
+        completion_tokens=1,
+        total_tokens=(prompt or 0) + 1,
+        cached_prompt_tokens=cached,
+        cache_creation_input_tokens=created,
+        total_input_tokens=total_input,
+    )
+
+
+def test_accumulate_keeps_latest_total_input() -> None:
+    """Input size is per-call, so the latest call wins like prompt_tokens."""
+    first = _usage(600, cached=0, created=600, total_input=1200)
+    second = _usage(2, cached=600, created=10, total_input=612)
+    merged = tool_loop.accumulate_usage(first, second)
+    assert merged is not None
+    assert merged.prompt_tokens == 2
+    assert merged.total_input_tokens == 612
+    # Cache counters still sum for cost accounting.
+    assert merged.cached_prompt_tokens == 600
+    assert merged.cache_creation_input_tokens == 610
+
+
+def test_accumulate_tolerates_missing_total_input() -> None:
+    """Hand-built usages without the field degrade to None, not a crash."""
+    merged = tool_loop.accumulate_usage(_usage(10), _usage(20))
+    assert merged is not None
+    assert merged.total_input_tokens is None
+    assert merged.prompt_tokens == 20

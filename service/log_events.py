@@ -27,6 +27,10 @@ class TokenUsage(pydantic.BaseModel):
     cached_prompt_tokens: int | None = None
     # Prompt tokens written to cache (Anthropic cache_creation_input_tokens).
     cache_creation_input_tokens: int | None = None
+    # Total input tokens for the call: fresh + cache-read + cache-write.
+    # The window-relevant size; Anthropic sums the parts, OpenAI-dialect
+    # reports the provider total. total_tokens stays fresh-in + out.
+    total_input_tokens: int | None = None
 
 
 class PromptEvent(BaseEvent):

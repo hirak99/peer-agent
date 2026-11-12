@@ -261,6 +261,8 @@ class OpenAICompatBackend(base.Backend):
             total_tokens=total_tokens,
             cached_prompt_tokens=cached,
             cache_creation_input_tokens=None,
+            # Provider prompt_tokens already totals input (cached is a subset).
+            total_input_tokens=prompt_tokens,
         )
 
     def _request_turn(

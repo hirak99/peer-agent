@@ -324,3 +324,23 @@ def test_complete_flags_truncated_reply() -> None:
         [{"role": "user", "content": "hi"}], base.ToolContext(workdir=None), None
     )
     assert completion.truncated is True
+
+
+def test_to_token_usage_sums_input_parts() -> None:
+    """Anthropic input is fresh + cache-read + cache-write."""
+    usage = types.SimpleNamespace(
+        input_tokens=2,
+        output_tokens=2875,
+        cache_read_input_tokens=671736,
+        cache_creation_input_tokens=339307,
+    )
+    mapped = anthropic_backend.AnthropicBackend._to_token_usage(usage)
+    assert mapped.total_input_tokens == 2 + 671736 + 339307
+    assert mapped.total_tokens == 2 + 2875
+
+
+def test_to_token_usage_without_cache_parts() -> None:
+    """A cache-cold turn totals just the fresh input."""
+    usage = types.SimpleNamespace(input_tokens=487, output_tokens=47)
+    mapped = anthropic_backend.AnthropicBackend._to_token_usage(usage)
+    assert mapped.total_input_tokens == 487

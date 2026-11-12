@@ -36,9 +36,9 @@ instead of re-prefilling tens of thousands of tokens cold. Raise
 
 **Trigger (exact, preferred).** `--compact-trigger-tokens N` compacts
 before a turn when the last billed input reached N. The billed count is
-the turn's total input — fresh tokens plus cache reads and writes
-(`response.usage` accumulates across tool-loop calls, so a cached,
-multi-call turn still counts its full per-call context). No reserve,
+`response.usage.total_input_tokens`: fresh tokens plus cache reads and
+writes for the call (cache counters accumulate across tool-loop calls,
+while the input total keeps the latest per-call value). No reserve,
 margin, or estimation is subtracted. Example: `--compact-trigger-tokens
 300000` on a 1M model compacts a large model early at 300k billed.
 

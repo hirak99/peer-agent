@@ -271,3 +271,17 @@ def test_summarize_raises_on_length_finish() -> None:
     )
     with pytest.raises(compaction.SummaryTruncatedError):
         backend.summarize([{"role": "user", "content": "history"}])
+
+
+def test_to_token_usage_reports_total_input() -> None:
+    """Provider prompt_tokens totals input; cached stays a subset."""
+    usage = types.SimpleNamespace(
+        prompt_tokens=617,
+        completion_tokens=38,
+        total_tokens=655,
+        prompt_tokens_details=types.SimpleNamespace(cached_tokens=512),
+    )
+    mapped = openai_compat_backend.OpenAICompatBackend._to_token_usage(usage)
+    assert mapped.total_input_tokens == 617
+    assert mapped.total_tokens == 655
+    assert mapped.cached_prompt_tokens == 512

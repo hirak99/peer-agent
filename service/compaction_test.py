@@ -389,10 +389,12 @@ class _UsageStubBackend(stub_backend.StubBackend):
         prompt_tokens: int,
         cached_tokens: int | None = None,
         cache_creation_tokens: int | None = None,
+        total_input_tokens: int | None = None,
     ) -> None:
         self._prompt_tokens = prompt_tokens
         self._cached_tokens = cached_tokens
         self._cache_creation_tokens = cache_creation_tokens
+        self._total_input_tokens = total_input_tokens
 
     def complete(  # type: ignore[override]
         self,
@@ -410,6 +412,7 @@ class _UsageStubBackend(stub_backend.StubBackend):
             total_tokens=self._prompt_tokens + 10,
             cached_prompt_tokens=self._cached_tokens,
             cache_creation_input_tokens=self._cache_creation_tokens,
+            total_input_tokens=self._total_input_tokens,
         )
         return completion
 
@@ -548,6 +551,22 @@ def test_remembered_usage_is_total_input(tmp_path: pathlib.Path) -> None:
         log_events.TokenUsage(prompt_tokens=617, cached_prompt_tokens=512),
     )
     assert conversations.load_last_prompt_tokens("cid2") == 617
+
+
+def test_remembered_usage_prefers_total_input(tmp_path: pathlib.Path) -> None:
+    """Backends reporting total input bypass the max() fallback."""
+    conversations = store.ConversationStore(tmp_path / "conversations")
+    chat_turn._remember_last_usage(
+        conversations,
+        "cid",
+        log_events.TokenUsage(
+            prompt_tokens=4,
+            cached_prompt_tokens=0,
+            cache_creation_input_tokens=342226,
+            total_input_tokens=342230,
+        ),
+    )
+    assert conversations.load_last_prompt_tokens("cid") == 342230
 
 
 def test_cache_hot_turn_trips_trigger_next_turn(tmp_path: pathlib.Path) -> None:

@@ -217,14 +217,24 @@ class AnthropicBackend(base.Backend):
         total_tokens: int | None = None
         if prompt_tokens is not None or completion_tokens is not None:
             total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
+        cached: int | None = getattr(usage, "cache_read_input_tokens", None)
+        created: int | None = getattr(usage, "cache_creation_input_tokens", None)
+        total_input_tokens: int | None = None
+        if (
+            prompt_tokens is not None
+            or cached is not None
+            or created is not None
+        ):
+            total_input_tokens = (
+                (prompt_tokens or 0) + (cached or 0) + (created or 0)
+            )
         return log_events.TokenUsage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
-            cached_prompt_tokens=getattr(usage, "cache_read_input_tokens", None),
-            cache_creation_input_tokens=getattr(
-                usage, "cache_creation_input_tokens", None
-            ),
+            cached_prompt_tokens=cached,
+            cache_creation_input_tokens=created,
+            total_input_tokens=total_input_tokens,
         )
 
     @staticmethod
