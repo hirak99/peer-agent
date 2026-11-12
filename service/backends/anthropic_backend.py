@@ -214,9 +214,6 @@ class AnthropicBackend(base.Backend):
     def _to_token_usage(usage: Any) -> log_events.TokenUsage:
         prompt_tokens: int | None = getattr(usage, "input_tokens", None)
         completion_tokens: int | None = getattr(usage, "output_tokens", None)
-        total_tokens: int | None = None
-        if prompt_tokens is not None or completion_tokens is not None:
-            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
         cached: int | None = getattr(usage, "cache_read_input_tokens", None)
         created: int | None = getattr(usage, "cache_creation_input_tokens", None)
         total_input_tokens: int | None = None
@@ -231,7 +228,6 @@ class AnthropicBackend(base.Backend):
         return log_events.TokenUsage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
             cached_prompt_tokens=cached,
             cache_creation_input_tokens=created,
             total_input_tokens=total_input_tokens,

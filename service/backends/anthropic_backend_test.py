@@ -336,7 +336,7 @@ def test_to_token_usage_sums_input_parts() -> None:
     )
     mapped = anthropic_backend.AnthropicBackend._to_token_usage(usage)
     assert mapped.total_input_tokens == 2 + 671736 + 339307
-    assert mapped.total_tokens == 2 + 2875
+    assert getattr(mapped, "total_tokens", None) is None
 
 
 def test_to_token_usage_without_cache_parts() -> None:

@@ -38,9 +38,9 @@ instead of re-prefilling tens of thousands of tokens cold. Raise
 before a turn when the last billed input reached N. The billed count is
 `response.usage.total_input_tokens`: fresh tokens plus cache reads and
 writes for the call (cache counters accumulate across tool-loop calls,
-while the input total keeps the latest per-call value). `total_tokens`
-is deprecated — fresh-in + out only, cache excluded — and stays in logs
-and responses for compatibility. No reserve,
+while the input total keeps the latest per-call value). The old
+`total_tokens` (fresh-in + out, cache excluded) is removed; use
+`total_input_tokens` (+ `completion_tokens` for output). No reserve,
 margin, or estimation is subtracted. Example: `--compact-trigger-tokens
 300000` on a 1M model compacts a large model early at 300k billed.
 

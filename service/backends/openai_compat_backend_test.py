@@ -283,5 +283,6 @@ def test_to_token_usage_reports_total_input() -> None:
     )
     mapped = openai_compat_backend.OpenAICompatBackend._to_token_usage(usage)
     assert mapped.total_input_tokens == 617
-    assert mapped.total_tokens == 655
     assert mapped.cached_prompt_tokens == 512
+    # The provider's own total is dropped, not passed through.
+    assert getattr(mapped, "total_tokens", None) is None

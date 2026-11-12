@@ -244,11 +244,6 @@ class OpenAICompatBackend(base.Backend):
     def _to_token_usage(usage: Any) -> log_events.TokenUsage:
         prompt_tokens: int | None = getattr(usage, "prompt_tokens", None)
         completion_tokens: int | None = getattr(usage, "completion_tokens", None)
-        total_tokens: int | None = getattr(usage, "total_tokens", None)
-        if total_tokens is None and (
-            prompt_tokens is not None or completion_tokens is not None
-        ):
-            total_tokens = (prompt_tokens or 0) + (completion_tokens or 0)
         cached: int | None = None
         details = getattr(usage, "prompt_tokens_details", None)
         if details is not None:
@@ -258,7 +253,6 @@ class OpenAICompatBackend(base.Backend):
         return log_events.TokenUsage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
             cached_prompt_tokens=cached,
             cache_creation_input_tokens=None,
             # Provider prompt_tokens already totals input (cached is a subset).

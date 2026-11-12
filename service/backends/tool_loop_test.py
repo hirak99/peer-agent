@@ -72,7 +72,6 @@ def _usage(
     return log_events.TokenUsage(
         prompt_tokens=prompt,
         completion_tokens=1,
-        total_tokens=(prompt or 0) + 1,
         cached_prompt_tokens=cached,
         cache_creation_input_tokens=created,
         total_input_tokens=total_input,

@@ -130,9 +130,9 @@ def test_write_tokens_mapped() -> None:
     mapped = openai_cloud_backend.OpenAICloudBackend._to_token_usage(usage)
     assert mapped.cached_prompt_tokens == 40
     assert mapped.cache_creation_input_tokens == 60
-    # Provider prompt_tokens already totals input; total stays fresh-in + out.
+    # Provider prompt_tokens already totals input; provider total dropped.
     assert mapped.total_input_tokens == 100
-    assert mapped.total_tokens == 110
+    assert getattr(mapped, "total_tokens", None) is None
 
 
 def test_describe_names_openai() -> None:

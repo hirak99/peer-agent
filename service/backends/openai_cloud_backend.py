@@ -126,7 +126,6 @@ class OpenAICloudBackend(openai_compat_backend.OpenAICompatBackend):
         return log_events.TokenUsage(
             prompt_tokens=base_usage.prompt_tokens,
             completion_tokens=base_usage.completion_tokens,
-            total_tokens=base_usage.total_tokens,
             cached_prompt_tokens=base_usage.cached_prompt_tokens,
             cache_creation_input_tokens=written,
             total_input_tokens=base_usage.prompt_tokens,

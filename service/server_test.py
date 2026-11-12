@@ -323,7 +323,8 @@ def test_old_response_lines_parse_without_total_input() -> None:
     )
     assert isinstance(old, log_events.ResponseEvent)
     assert old.usage is not None
-    assert old.usage.total_tokens == 336377
+    # Dropped field: old lines parse, the attribute is gone.
+    assert getattr(old.usage, "total_tokens", None) is None
     assert old.usage.total_input_tokens is None
     new = adapter.validate_python(
         {
@@ -332,7 +333,6 @@ def test_old_response_lines_parse_without_total_input() -> None:
             "usage": {
                 "prompt_tokens": 4,
                 "completion_tokens": 47,
-                "total_tokens": 51,
                 "cached_prompt_tokens": 384,
                 "cache_creation_input_tokens": None,
                 "total_input_tokens": 871,
@@ -347,7 +347,6 @@ def test_old_response_lines_parse_without_total_input() -> None:
     assert isinstance(new, log_events.ResponseEvent)
     assert new.usage is not None
     assert new.usage.total_input_tokens == 871
-    # Deprecated total_tokens is still emitted for compatibility.
-    assert new.usage.total_tokens == 51
+    assert getattr(new.usage, "total_tokens", None) is None
     # And the JSON round-trip the logs actually store.
     assert adapter.validate_json(new.model_dump_json()).usage == new.usage

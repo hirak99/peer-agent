@@ -409,7 +409,6 @@ class _UsageStubBackend(stub_backend.StubBackend):
         completion.usage = log_events.TokenUsage(
             prompt_tokens=self._prompt_tokens,
             completion_tokens=10,
-            total_tokens=self._prompt_tokens + 10,
             cached_prompt_tokens=self._cached_tokens,
             cache_creation_input_tokens=self._cache_creation_tokens,
             total_input_tokens=self._total_input_tokens,
@@ -538,7 +537,6 @@ def test_remembered_usage_is_total_input(tmp_path: pathlib.Path) -> None:
         log_events.TokenUsage(
             prompt_tokens=2,
             completion_tokens=2875,
-            total_tokens=2883,
             cached_prompt_tokens=671736,
             cache_creation_input_tokens=339307,
         ),
