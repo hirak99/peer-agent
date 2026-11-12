@@ -66,17 +66,45 @@ class ConversationStore:
             stale.unlink()
         return str(backup_path)
 
+    def _meta_path_for(self, conversation_id: str) -> pathlib.Path:
+        return self._directory / f"{conversation_id}.meta.json"
+
+    def _read_meta(self, conversation_id: str) -> dict[str, Any]:
+        """Loads the metadata dict, tolerating missing or corrupt files."""
+        path = self._meta_path_for(conversation_id)
+        if not path.exists():
+            return {}
+        try:
+            raw: Any = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def _write_meta(self, conversation_id: str, meta: dict[str, Any]) -> None:
+        """Merges one metadata dict atomically over the stored one."""
+        path = self._meta_path_for(conversation_id)
+        merged = self._read_meta(conversation_id)
+        merged.update(meta)
+        tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+        tmp.write_text(json.dumps(merged))
+        os.replace(tmp, path)
+
     def load_system_prompt(self, conversation_id: str) -> str | None:
         """Loads the tracked system prompt, or None for new conversations."""
-        path = self._directory / f"{conversation_id}.meta.json"
-        if not path.exists():
-            return None
-        raw: Any = json.loads(path.read_text())
-        if isinstance(raw, dict) and isinstance(raw.get("system_prompt"), str):
-            return raw["system_prompt"]
-        return None
+        prompt = self._read_meta(conversation_id).get("system_prompt")
+        return prompt if isinstance(prompt, str) else None
 
     def save_system_prompt(self, conversation_id: str, system_prompt: str) -> None:
         """Records the active system prompt for change detection."""
-        path = self._directory / f"{conversation_id}.meta.json"
-        path.write_text(json.dumps({"system_prompt": system_prompt}))
+        self._write_meta(conversation_id, {"system_prompt": system_prompt})
+
+    def load_last_prompt_tokens(self, conversation_id: str) -> int | None:
+        """Loads the last billed input size, or None when never recorded."""
+        tokens = self._read_meta(conversation_id).get("last_prompt_tokens")
+        return tokens if isinstance(tokens, int) else None
+
+    def save_last_prompt_tokens(
+        self, conversation_id: str, prompt_tokens: int
+    ) -> None:
+        """Records the last billed input size for the trigger decision."""
+        self._write_meta(conversation_id, {"last_prompt_tokens": prompt_tokens})

@@ -379,3 +379,138 @@ def test_proactive_compaction_snapshots_history(tmp_path: pathlib.Path) -> None:
     assert len(snapshots) == 1
     (event,) = _compaction_events(tmp_path, cid)
     assert event["backup_path"] == str(snapshots[0])
+
+
+class _UsageStubBackend(stub_backend.StubBackend):
+    """Stub reporting a fixed billed input size per turn."""
+
+    def __init__(self, prompt_tokens: int) -> None:
+        self._prompt_tokens = prompt_tokens
+
+    def complete(  # type: ignore[override]
+        self,
+        messages: list[dict[str, Any]],
+        context: Any,
+        host_max_tool_turns: Any = None,
+        on_tool_event: Any = None,
+    ) -> Any:
+        completion = super().complete(
+            messages, context, host_max_tool_turns, on_tool_event
+        )
+        completion.usage = log_events.TokenUsage(
+            prompt_tokens=self._prompt_tokens,
+            completion_tokens=10,
+            total_tokens=self._prompt_tokens + 10,
+        )
+        return completion
+
+
+def _trigger_client(
+    tmp_path: pathlib.Path, backend: Any, trigger_tokens: int
+) -> tuple[testclient.TestClient, store.ConversationStore]:
+    """App whose compaction trigger is an exact billed-input threshold."""
+    conversations = store.ConversationStore(tmp_path / "conversations")
+    events = event_log.EventLog(tmp_path / "logs")
+    config = compaction.CompactionConfig(trigger_tokens=trigger_tokens, keep_messages=2)
+    app = server.build_app(
+        backend, conversations, events, "sys", compaction_config=config
+    )
+    return testclient.TestClient(app), conversations
+
+
+def _seed_turns(
+    client: testclient.TestClient, tmp_path: pathlib.Path, *prompts: str
+) -> str:
+    """Runs turns on one thread; returns the conversation id."""
+    cid = ""
+    for index, prompt in enumerate(prompts):
+        body: dict[str, Any] = client.post(
+            "/chat",
+            json={
+                "prompt": prompt,
+                "cwd": str(tmp_path),
+                **({"conversation_id": cid} if cid else {}),
+            },
+        ).json()
+        cid = str(body["conversation_id"])
+        assert index < 10
+    return cid
+
+
+def test_trigger_compacts_when_last_billed_reaches_threshold(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Last prompt_tokens >= trigger compacts the past before the new turn."""
+    client, conversations = _trigger_client(tmp_path, _UsageStubBackend(50), 100)
+    cid = _seed_turns(client, tmp_path, "one", "two", "three")
+    # Simulate a heavy billed turn; the backend itself reports small usage.
+    conversations.save_last_prompt_tokens(cid, 150)
+    body: dict[str, Any] = client.post(
+        "/chat",
+        json={"prompt": "four", "conversation_id": cid, "cwd": str(tmp_path)},
+    ).json()
+    assert body["compaction"] == {"reason": "auto"}
+    saved = conversations.load(cid)
+    assert "[Conversation summary" in json.dumps(saved)
+    # The new prompt survives compaction and gets its reply.
+    assert saved[-2] == {"role": "user", "content": "four"}
+    assert body["conversation_id"] == cid
+
+
+def test_trigger_below_threshold_skips_compaction(tmp_path: pathlib.Path) -> None:
+    """Last prompt_tokens under the trigger leaves history untouched."""
+    client, conversations = _trigger_client(tmp_path, _UsageStubBackend(50), 100)
+    cid = _seed_turns(client, tmp_path, "one", "two", "three")
+    conversations.save_last_prompt_tokens(cid, 60)
+    body: dict[str, Any] = client.post(
+        "/chat",
+        json={"prompt": "four", "conversation_id": cid, "cwd": str(tmp_path)},
+    ).json()
+    assert "compaction" not in body
+    saved = conversations.load(cid)
+    assert "[Conversation summary" not in json.dumps(saved)
+
+
+def test_trigger_without_usage_warns_and_falls_back(
+    tmp_path: pathlib.Path, caplog: Any
+) -> None:
+    """Trigger set but nothing billed: warn every turn, keep estimating."""
+    client, _ = _trigger_client(tmp_path, stub_backend.StubBackend(), 100)
+    with caplog.at_level("WARNING", logger="service.chat_turn"):
+        _seed_turns(client, tmp_path, "one", "two")
+    warnings = [
+        record
+        for record in caplog.records
+        if "falling back to chars/4 estimate" in record.getMessage()
+    ]
+    assert len(warnings) == 2
+
+
+def test_trigger_with_usage_never_warns(tmp_path: pathlib.Path, caplog: Any) -> None:
+    """Exact counts available: only the first turn still falls back."""
+    client, _ = _trigger_client(tmp_path, _UsageStubBackend(50), 10**9)
+    with caplog.at_level("WARNING", logger="service.chat_turn"):
+        _seed_turns(client, tmp_path, "one", "two")
+    warnings = [
+        record
+        for record in caplog.records
+        if "falling back to chars/4 estimate" in record.getMessage()
+    ]
+    # Turn one has no billed usage yet; turn two decides from turn one's.
+    assert len(warnings) == 1
+
+
+def test_last_prompt_tokens_persisted_per_turn(tmp_path: pathlib.Path) -> None:
+    """Each finished turn records its billed input for the next decision."""
+    client, conversations = _trigger_client(tmp_path, _UsageStubBackend(123), 10**9)
+    cid = _seed_turns(client, tmp_path, "one", "two")
+    assert conversations.load_last_prompt_tokens(cid) == 123
+
+
+def test_missing_usage_leaves_last_tokens_unset(tmp_path: pathlib.Path) -> None:
+    """Backends without usage keep the trigger falling back, not crashing."""
+    client, conversations = _trigger_client(
+        tmp_path, stub_backend.StubBackend(), 10**9
+    )
+    cid = _seed_turns(client, tmp_path, "one")
+    assert conversations.load_last_prompt_tokens(cid) is None

@@ -5,6 +5,7 @@ then run begin/finish inside it.
 """
 
 import dataclasses
+import logging
 import pathlib
 import threading
 
@@ -19,6 +20,8 @@ from service import store
 from service.backends import base
 
 from typing import Any
+
+_logger = logging.getLogger(__name__)
 
 
 class ConversationLocks:
@@ -133,6 +136,18 @@ def log_compaction(
     )
 
 
+def _remember_last_usage(
+    conversations: store.ConversationStore,
+    conversation_id: str,
+    usage: log_events.TokenUsage | None,
+) -> None:
+    """Persists billed input size for the next turn's trigger decision."""
+    if usage is not None and usage.prompt_tokens is not None:
+        conversations.save_last_prompt_tokens(
+            conversation_id, usage.prompt_tokens
+        )
+
+
 def record_tool_event(
     events: event_log.EventLog,
     conversation_id: str,
@@ -182,18 +197,85 @@ def log_completion(
     )
 
 
+def _splice_summary(
+    backend: base.Backend,
+    config: compaction.CompactionConfig,
+    history: list[dict[str, Any]],
+    old: list[dict[str, Any]],
+    recent: list[dict[str, Any]],
+    reason: str,
+) -> base.CompactionRecord | None:
+    """Summarizes the compactable prefix and splices it in place."""
+    keep = compaction.resolve_keep(config)
+    pre_messages = len(history)
+    pre_est = compaction.estimate_tokens(history)
+    summary: str | None = None
+    if config.in_context:
+        summary = in_context_compaction.attempt_summary(backend, history, keep)
+    if summary is None:
+        try:
+            summary = backend.summarize(compaction.truncate_for_summary(old))
+        except compaction.SummaryTruncatedError:
+            # Budget hit: refuse rather than persist a cut-off handoff.
+            return None
+        except Exception:
+            return None
+    if not summary.strip():
+        return None
+    compacted = compaction.build_compacted_history(summary, recent, len(old))
+    history[:] = compacted
+    return base.CompactionRecord(
+        pre_messages=pre_messages,
+        post_messages=len(compacted),
+        pre_tokens_est=pre_est,
+        post_tokens_est=compaction.estimate_tokens(compacted),
+        reason=reason,
+    )
+
+
 def _maybe_compact_proactive(
     events: event_log.EventLog,
     backend: base.Backend | None,
     config: compaction.CompactionConfig | None,
     history: list[dict[str, Any]],
+    prompt: str,
+    last_prompt_tokens: int | None,
+    conversation_id: str,
     forced: bool,
 ) -> base.CompactionRecord | None:
-    """Compacts history in place when forced or over the margin."""
+    """Compacts history in place when forced, triggered, or over margin.
+
+    The new prompt is appended by this helper: the exact trigger path
+    compacts the past first and takes the prompt after, while the
+    window/forced paths keep the prompt in the estimate as before.
+    """
     if backend is None or (not forced and config is None):
+        history.append({"role": "user", "content": prompt})
         return None
     active = config or compaction.CompactionConfig()
     keep = compaction.resolve_keep(active)
+    trigger = active.trigger_tokens
+    if not forced and trigger is not None and last_prompt_tokens is not None:
+        # Exact path: last billed input decides, no reserve or margin.
+        if last_prompt_tokens < trigger:
+            history.append({"role": "user", "content": prompt})
+            return None
+        old, recent = compaction.split_for_compaction(history, keep)
+        if not old:
+            history.append({"role": "user", "content": prompt})
+            return None
+        record = _splice_summary(backend, active, history, old, recent, "margin")
+        history.append({"role": "user", "content": prompt})
+        return record
+    if not forced and trigger is not None and last_prompt_tokens is None:
+        _logger.warning(
+            "No billed usage recorded for conversation %s with "
+            "trigger_tokens=%s; falling back to chars/4 estimate "
+            "for this turn.",
+            conversation_id,
+            trigger,
+        )
+    history.append({"role": "user", "content": prompt})
     old, recent = compaction.split_for_compaction(history, keep)
     if not old:
         return None
@@ -209,31 +291,9 @@ def _maybe_compact_proactive(
             window,
         ):
             return None
-    pre_messages = len(history)
-    pre_est = compaction.estimate_tokens(history)
-    summary: str | None = None
-    if active.in_context:
-        summary = in_context_compaction.attempt_summary(backend, history, keep)
-    if summary is None:
-        try:
-            summary = backend.summarize(compaction.truncate_for_summary(old))
-        except compaction.SummaryTruncatedError:
-            # Budget hit: refuse rather than persist a cut-off handoff.
-            return None
-        except Exception:
-            return None
-    if not summary.strip():
-        return None
-    compacted = compaction.build_compacted_history(summary, recent, len(old))
-    history[:] = compacted
-    record = base.CompactionRecord(
-        pre_messages=pre_messages,
-        post_messages=len(compacted),
-        pre_tokens_est=pre_est,
-        post_tokens_est=compaction.estimate_tokens(compacted),
-        reason="forced" if forced else "margin",
+    return _splice_summary(
+        backend, active, history, old, recent, "forced" if forced else "margin"
     )
-    return record
 
 
 def begin_turn(
@@ -252,16 +312,27 @@ def begin_turn(
     ):
         raise fastapi.HTTPException(status_code=404, detail="Unknown conversation_id.")
     history = conversations.load(conversation_id) if request.conversation_id else []
+    last_prompt_tokens = (
+        conversations.load_last_prompt_tokens(conversation_id)
+        if request.conversation_id
+        else None
+    )
     maybe_emit_system_prompt(conversations, events, conversation_id, system_prompt)
     events.record(
         conversation_id,
         log_events.PromptEvent(prompt=request.prompt, cwd=request.cwd),
     )
-    history.append({"role": "user", "content": request.prompt})
     record: base.CompactionRecord | None = None
     if request.compact is not False:
         record = _maybe_compact_proactive(
-            events, backend, compaction_config, history, forced=request.compact is True
+            events,
+            backend,
+            compaction_config,
+            history,
+            request.prompt,
+            last_prompt_tokens,
+            conversation_id,
+            forced=request.compact is True,
         )
         if record is not None and backend is not None:
             backup_path = conversations.backup_current(conversation_id)
@@ -273,6 +344,8 @@ def begin_turn(
                 backup_path=backup_path,
                 summary_budget=backend.summary_budget(),
             )
+    else:
+        history.append({"role": "user", "content": request.prompt})
     return TurnState(
         conversation_id=conversation_id,
         history=history,
@@ -395,6 +468,7 @@ def finish_turn(
             summary_budget=backend.summary_budget(),
         )
     conversations.save(state.conversation_id, state.history)
+    _remember_last_usage(conversations, state.conversation_id, completion.usage)
     log_completion(backend, events, state.conversation_id, completion)
     info = _host_compaction_info(state.compaction, completion.compaction)
     if info is None:
@@ -443,6 +517,11 @@ def finish_stream_turn(
             summary_budget=backend.summary_budget(),
         )
     conversations.save(state.conversation_id, state.history)
+    _remember_last_usage(
+        conversations,
+        state.conversation_id,
+        usage if isinstance(usage, log_events.TokenUsage) else None,
+    )
     log_completion(
         backend,
         events,

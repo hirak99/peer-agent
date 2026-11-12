@@ -45,8 +45,12 @@ class CompactionConfig:
     # falling back to a separate summarize() call. Opt-in for slow-prefill
     # local models; recovery compaction always uses summarize().
     in_context: bool = False
-    # Manual window override (tests, unknown models); else backend value.
+    # Manual window override (tests, wrong metadata); else backend value.
     context_window_override: int | None = None
+    # Exact billed-input trigger: compact when the last turn's
+    # prompt_tokens reached this. No reserve, margin, or estimation.
+    # Beats the window formula when set and exact counts exist.
+    trigger_tokens: int | None = None
 
 
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
