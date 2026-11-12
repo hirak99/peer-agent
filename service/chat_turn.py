@@ -142,10 +142,19 @@ def _remember_last_usage(
     usage: log_events.TokenUsage | None,
 ) -> None:
     """Persists billed input size for the next turn's trigger decision."""
-    if usage is not None and usage.prompt_tokens is not None:
-        conversations.save_last_prompt_tokens(
-            conversation_id, usage.prompt_tokens
-        )
+    if usage is None:
+        return
+    # Backends disagree on whether prompt_tokens includes cached input:
+    # Anthropic reports fresh-only input_tokens beside cache_read/write,
+    # OpenAI-dialect reports total input with cached as a subset. The max
+    # is exact for inclusive backends and within fresh-tokens for
+    # exclusive ones; either way it never undercounts into silence.
+    cached = (usage.cached_prompt_tokens or 0) + (
+        usage.cache_creation_input_tokens or 0
+    )
+    total = max(usage.prompt_tokens or 0, cached)
+    if total:
+        conversations.save_last_prompt_tokens(conversation_id, total)
 
 
 def record_tool_event(

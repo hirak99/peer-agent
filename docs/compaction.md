@@ -35,11 +35,12 @@ instead of re-prefilling tens of thousands of tokens cold. Raise
 ## When compaction fires
 
 **Trigger (exact, preferred).** `--compact-trigger-tokens N` compacts
-before a turn when the last billed input reached N. The billed count
-(`response.usage.prompt_tokens`, persisted per conversation) already
-includes system prompt, tool schemas, and real tokenization — no reserve,
+before a turn when the last billed input reached N. The billed count is
+the turn's total input — fresh tokens plus cache reads and writes
+(`response.usage` accumulates across tool-loop calls, so a cached,
+multi-call turn still counts its full per-call context). No reserve,
 margin, or estimation is subtracted. Example: `--compact-trigger-tokens
-300000` on a 1M model compacts early at exactly 300k billed.
+300000` on a 1M model compacts a large model early at 300k billed.
 
 **Window formula (fallback).** Without a trigger (or when no billed
 usage exists yet — first turn, or backends that report none),
