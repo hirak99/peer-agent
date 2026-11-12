@@ -1,10 +1,12 @@
 """Tests for the OpenAI-compatible backend (offline, faked transport)."""
 
+import pathlib
 import types
 
 import pytest
 
 from service import compaction
+from service import store
 from service.backends import base
 from service.backends import openai_compat_backend
 from service.tools import registry
@@ -148,6 +150,53 @@ def test_complete_runs_tool_loop() -> None:
     assert completion.tool_events[0].name == "bash"
     assert completion.usage is not None
     assert completion.usage.prompt_tokens == 10
+
+
+def test_large_tool_notice_persists_into_next_request(tmp_path: pathlib.Path) -> None:
+    """The peer receives the notice during the tool loop and on later turns."""
+    backend = _backend()
+    output = "x" * 10241
+    backend._tools.register(
+        registry.Tool(
+            name="bash",
+            description="fake",
+            input_schema={},
+            handler=lambda _input, _context: registry.ToolResult(output=output),
+        )
+    )
+    responses = iter(
+        [
+            _response(tool_calls=[_tool_call("c1", "bash", "{}")]),
+            _response(content="done"),
+            _response(content="continued"),
+        ]
+    )
+    requests: list[list[dict[str, Any]]] = []
+
+    def request(messages, context):
+        requests.append(backend._chat_messages(messages))
+        return next(responses)
+
+    backend._request_turn = request  # type: ignore[method-assign]
+    messages: list[dict[str, Any]] = [{"role": "user", "content": "run it"}]
+    context = base.ToolContext(workdir=None)
+    completion = backend.complete(messages, context)
+    conversations = store.ConversationStore(tmp_path)
+    conversations.save("cid", messages)
+    restored = conversations.load("cid")
+    restored.append({"role": "user", "content": "continue"})
+    backend.complete(restored, context)
+
+    expected = (
+        output + "\n[note: this result was ~10 KB; prefer narrower reads/searches]"
+    )
+    assert messages[2]["content"][0]["content"] == expected
+    for wire_messages in requests[1:]:
+        results = [
+            message["content"] for message in wire_messages if message["role"] == "tool"
+        ]
+        assert results == [expected]
+    assert completion.tool_events[0].output == output
 
 
 def test_tool_schemas_use_function_shape() -> None:

@@ -24,6 +24,8 @@ from typing import Any
 HOLD_AFTER_IDENTICAL_FAILURES = 5
 # Cap on remembered call history; trailing streaks only need the tail.
 SEEN_HISTORY_CAP = 512
+# Nudge the peer before individual results fill the context window.
+LARGE_RESULT_BYTES = 10 * 1024
 
 
 def call_key(name: str, tool_input: dict[str, Any]) -> str:
@@ -121,7 +123,14 @@ def execute_calls(
         )
         if on_event is not None:
             on_event(tool_events[-1])
-        executed.append((call_id, name, result.output, failed))
+        output = result.output
+        output_bytes = len(output.encode("utf-8"))
+        if output_bytes > LARGE_RESULT_BYTES:
+            output += (
+                f"\n[note: this result was ~{output_bytes / 1024:.0f} KB; "
+                "prefer narrower reads/searches]"
+            )
+        executed.append((call_id, name, output, failed))
     return executed
 
 
