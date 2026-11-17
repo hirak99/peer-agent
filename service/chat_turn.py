@@ -190,7 +190,7 @@ def log_completion(
     Tool traffic is recorded live via the on_tool_event sink during
     complete(), not here — so per-call timestamps reflect execution time,
     and calls survive a mid-turn failure. Per-call usage only survives a
-    finished turn, so api_call lines land here just before the response.
+    finished turn, so api_call_usage lines land here just before the response.
     """
     identity = backend.describe()
     for index, api_usage in enumerate(completion.api_usages, start=1):

@@ -355,7 +355,7 @@ def test_old_response_lines_parse_without_total_input() -> None:
 
 
 def test_log_completion_records_per_call_usage(tmp_path: pathlib.Path) -> None:
-    """Per-call api_call lines precede the response; response is last-call sized."""
+    """Per-call api_call_usage lines precede the response; response is last-call sized."""
     first = log_events.TokenUsage(
         fresh_input_tokens=2,
         completion_tokens=10,

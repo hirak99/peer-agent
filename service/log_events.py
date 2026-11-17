@@ -66,10 +66,10 @@ class ResponseEvent(BaseEvent):
 
 
 class ApiCallEvent(BaseEvent):
-    """One provider API call inside a turn (one tool-loop step)."""
+    """Usage record for one provider API call in a turn (log-only)."""
 
     # Discriminator for the LogEvent union.
-    type: Literal["api_call"] = "api_call"
+    type: Literal["api_call_usage"] = "api_call_usage"
     # 1-based index of this call within the turn's tool loop.
     api_turn: int
     # Provider-reported counts for this call only (never summed).

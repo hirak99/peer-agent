@@ -8,10 +8,10 @@ rebilled. Breakpoints attach by default and suspend only after
 `service/backends/anthropic_backend.py`) consecutive gaps over
 5 minutes. Per-request copies keep stored history clean.
 
-Watch `api_call` lines in `logs/` for per-API-call counts (one per
+Watch `api_call_usage` lines in `logs/` for per-API-call counts (one per
 tool-loop step): each shows that call's cache read + write + total.
 The `response` line's `usage` is the LAST call only (the live prompt
-size, e.g. ~260k) — sum the turn's `api_call` lines for billed totals.
+size, e.g. ~260k) — sum the turn's `api_call_usage` lines for billed totals.
 Cache reads repeat the prefix every call, so the summed reads across
 a turn are a multiple of the prompt size; that is expected, not growth.
 
