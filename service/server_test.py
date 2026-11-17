@@ -381,11 +381,11 @@ def test_log_completion_records_per_call_usage(tmp_path: pathlib.Path) -> None:
     )
     parsed = _parse_log(tmp_path, "conv1")
     assert len(parsed) == 3
-    assert isinstance(parsed[0], log_events.ApiCallEvent)
+    assert isinstance(parsed[0], log_events.ApiCallUsageEvent)
     assert parsed[0].api_turn == 1
     assert parsed[0].usage is not None
     assert parsed[0].usage.cached_prompt_tokens == 250000
-    assert isinstance(parsed[1], log_events.ApiCallEvent)
+    assert isinstance(parsed[1], log_events.ApiCallUsageEvent)
     assert parsed[1].api_turn == 2
     assert parsed[1].usage is not None
     assert parsed[1].usage.cached_prompt_tokens == 253000

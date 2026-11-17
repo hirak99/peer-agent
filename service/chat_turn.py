@@ -196,7 +196,7 @@ def log_completion(
     for index, api_usage in enumerate(completion.api_usages, start=1):
         events.record(
             conversation_id,
-            log_events.ApiCallEvent(api_turn=index, usage=api_usage),
+            log_events.ApiCallUsageEvent(api_turn=index, usage=api_usage),
         )
     events.record(
         conversation_id,

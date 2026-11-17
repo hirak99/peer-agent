@@ -65,7 +65,7 @@ class ResponseEvent(BaseEvent):
     reasoning: str | None = None
 
 
-class ApiCallEvent(BaseEvent):
+class ApiCallUsageEvent(BaseEvent):
     """Usage record for one provider API call in a turn (log-only)."""
 
     # Discriminator for the LogEvent union.
@@ -138,7 +138,7 @@ class SystemPromptEvent(BaseEvent):
 LogEvent = Annotated[
     PromptEvent
     | ResponseEvent
-    | ApiCallEvent
+    | ApiCallUsageEvent
     | ToolCallEvent
     | ToolResultEvent
     | SystemPromptEvent
