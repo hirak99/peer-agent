@@ -11,7 +11,6 @@ import hashlib
 import json
 from collections.abc import Callable
 
-from service import log_events
 from service.backends import base
 from service.tools import registry
 
@@ -132,49 +131,6 @@ def execute_calls(
             )
         executed.append((call_id, name, output, failed))
     return executed
-
-
-def accumulate_usage(
-    total: log_events.TokenUsage | None, latest: log_events.TokenUsage | None
-) -> log_events.TokenUsage | None:
-    """Merges per-turn usage: last prompt size, summed generation/cost."""
-    if latest is None:
-        return total
-    if total is None:
-        return latest
-    prompt = (
-        latest.fresh_input_tokens
-        if latest.fresh_input_tokens is not None
-        else total.fresh_input_tokens
-    )
-    completion = (total.completion_tokens or 0) + (latest.completion_tokens or 0)
-    cached = None
-    if (
-        total.cached_prompt_tokens is not None
-        or latest.cached_prompt_tokens is not None
-    ):
-        cached = (total.cached_prompt_tokens or 0) + (latest.cached_prompt_tokens or 0)
-    created = None
-    if (
-        total.cache_creation_input_tokens is not None
-        or latest.cache_creation_input_tokens is not None
-    ):
-        created = (total.cache_creation_input_tokens or 0) + (
-            latest.cache_creation_input_tokens or 0
-        )
-    # Input size is per-call, so the latest call wins.
-    total_input = (
-        latest.total_input_tokens
-        if latest.total_input_tokens is not None
-        else total.total_input_tokens
-    )
-    return log_events.TokenUsage(
-        fresh_input_tokens=prompt,
-        completion_tokens=completion,
-        cached_prompt_tokens=cached,
-        cache_creation_input_tokens=created,
-        total_input_tokens=total_input,
-    )
 
 
 def budget_notice(cap: int) -> str:

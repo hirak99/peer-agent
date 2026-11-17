@@ -54,7 +54,8 @@ class Completion:
 
     # The peer agent's final reply text.
     text: str
-    # Provider-reported token counts, or None when unreported.
+    # Token counts for the LAST provider call (live prompt size).
+    # Billed totals are the sum over api_usages, not this field.
     usage: log_events.TokenUsage | None
     # Tool invocations in order, for logging.
     tool_events: list[ToolEvent]
@@ -71,6 +72,9 @@ class Completion:
     # True when the final reply text was cut by the output budget.
     # Compaction callers must refuse to persist a truncated summary.
     truncated: bool = False
+    # Per-call provider counts in order, one entry per API call made
+    # while producing this reply. The final entry matches usage.
+    api_usages: list[log_events.TokenUsage] = dataclasses.field(default_factory=list)
 
 
 class Backend(abc.ABC):
@@ -124,6 +128,7 @@ class Backend(abc.ABC):
         tool_events.extend(completion.tool_events)
         if meta is not None:
             meta["usage"] = completion.usage
+            meta["api_usages"] = list(completion.api_usages)
             meta["status"] = completion.status
             meta["hint"] = completion.hint
             meta["tool_turns"] = completion.tool_turns

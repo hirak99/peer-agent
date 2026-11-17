@@ -8,11 +8,13 @@ import time
 import pydantic
 from fastapi import testclient
 
+from service import chat_turn
 from service import compaction
 from service import event_log
 from service import log_events
 from service import server
 from service import store
+from service.backends import base
 from service.backends import stub_backend
 
 from typing import Any
@@ -350,3 +352,45 @@ def test_old_response_lines_parse_without_total_input() -> None:
     assert getattr(new.usage, "total_tokens", None) is None
     # And the JSON round-trip the logs actually store.
     assert adapter.validate_json(new.model_dump_json()).usage == new.usage
+
+
+def test_log_completion_records_per_call_usage(tmp_path: pathlib.Path) -> None:
+    """Per-call api_call lines precede the response; response is last-call sized."""
+    first = log_events.TokenUsage(
+        fresh_input_tokens=2,
+        completion_tokens=10,
+        cached_prompt_tokens=250000,
+        cache_creation_input_tokens=3000,
+        total_input_tokens=253002,
+    )
+    last = log_events.TokenUsage(
+        fresh_input_tokens=3,
+        completion_tokens=5,
+        cached_prompt_tokens=253000,
+        cache_creation_input_tokens=100,
+        total_input_tokens=253103,
+    )
+    events = event_log.EventLog(tmp_path / "logs")
+    chat_turn.log_completion(
+        stub_backend.StubBackend(),
+        events,
+        "conv1",
+        base.Completion(
+            text="hi", usage=last, api_usages=[first, last], tool_events=[]
+        ),
+    )
+    parsed = _parse_log(tmp_path, "conv1")
+    assert len(parsed) == 3
+    assert isinstance(parsed[0], log_events.ApiCallEvent)
+    assert parsed[0].api_turn == 1
+    assert parsed[0].usage is not None
+    assert parsed[0].usage.cached_prompt_tokens == 250000
+    assert isinstance(parsed[1], log_events.ApiCallEvent)
+    assert parsed[1].api_turn == 2
+    assert parsed[1].usage is not None
+    assert parsed[1].usage.cached_prompt_tokens == 253000
+    assert isinstance(parsed[2], log_events.ResponseEvent)
+    # No summed 503k cache figure survives anywhere on the response line.
+    assert parsed[2].usage is not None
+    assert parsed[2].usage.total_input_tokens == 253103
+    assert parsed[2].usage.cached_prompt_tokens == 253000

@@ -345,17 +345,17 @@ class OpenAICompatBackend(base.Backend):
         messages: list[dict[str, Any]],
         text_prefix: str,
         tool_events: list[base.ToolEvent],
-        usage: log_events.TokenUsage | None,
+        api_usages: list[log_events.TokenUsage],
         tool_turns: int,
         cap: int,
     ) -> base.Completion:
         """Forces a summary text turn when the tool budget is spent."""
         messages.append({"role": "user", "content": tool_loop.budget_notice(cap)})
         response = self._request_turn(messages, base.ToolContext(workdir=None))
+        usage: log_events.TokenUsage | None = api_usages[-1] if api_usages else None
         if response.usage is not None:
-            usage = tool_loop.accumulate_usage(
-                usage, self._to_token_usage(response.usage)
-            )
+            usage = self._to_token_usage(response.usage)
+            api_usages.append(usage)
         text, _, turn_reasoning = self._parse_response(response)
         full = (text_prefix + "\n\n" + text).strip() if text_prefix else text
         messages.append({"role": "assistant", "content": full})
@@ -366,6 +366,7 @@ class OpenAICompatBackend(base.Backend):
         return base.Completion(
             text=full,
             usage=usage,
+            api_usages=list(api_usages),
             tool_events=tool_events,
             status="continuation_required",
             hint=hint,
@@ -429,6 +430,7 @@ class OpenAICompatBackend(base.Backend):
         tool_events: list[base.ToolEvent] = []
         seen: list[tuple[str, bool]] = []
         usage: log_events.TokenUsage | None = None
+        api_usages: list[log_events.TokenUsage] = []
         tool_turns = 0
         text_prefix = ""
         reasoning_parts: list[str] = []
@@ -436,7 +438,7 @@ class OpenAICompatBackend(base.Backend):
         while True:
             if cap is not None and tool_turns >= cap:
                 completion = self._yield_completion(
-                    messages, text_prefix, tool_events, usage, tool_turns, cap
+                    messages, text_prefix, tool_events, api_usages, tool_turns, cap
                 )
                 completion.compaction = recovered
                 if reasoning_parts or completion.reasoning:
@@ -456,9 +458,8 @@ class OpenAICompatBackend(base.Backend):
                 recovered = record
                 continue
             if response.usage is not None:
-                usage = tool_loop.accumulate_usage(
-                    usage, self._to_token_usage(response.usage)
-                )
+                usage = self._to_token_usage(response.usage)
+                api_usages.append(usage)
             text, calls, turn_reasoning = self._parse_response(response)
             if turn_reasoning:
                 reasoning_parts.append(turn_reasoning)
@@ -468,6 +469,7 @@ class OpenAICompatBackend(base.Backend):
                 return base.Completion(
                     text=full,
                     usage=usage,
+                    api_usages=list(api_usages),
                     tool_events=tool_events,
                     status="done",
                     hint=None,

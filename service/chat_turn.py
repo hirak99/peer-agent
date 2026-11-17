@@ -185,13 +185,19 @@ def log_completion(
     conversation_id: str,
     completion: base.Completion,
 ) -> None:
-    """Records the final response event.
+    """Records per-call usage lines plus the final response event.
 
     Tool traffic is recorded live via the on_tool_event sink during
     complete(), not here — so per-call timestamps reflect execution time,
-    and calls survive a mid-turn failure.
+    and calls survive a mid-turn failure. Per-call usage only survives a
+    finished turn, so api_call lines land here just before the response.
     """
     identity = backend.describe()
+    for index, api_usage in enumerate(completion.api_usages, start=1):
+        events.record(
+            conversation_id,
+            log_events.ApiCallEvent(api_turn=index, usage=api_usage),
+        )
     events.record(
         conversation_id,
         log_events.ResponseEvent(
@@ -511,6 +517,8 @@ def finish_stream_turn(
 ) -> dict[str, Any]:
     """Persists streamed history and returns the done-event payload."""
     usage = meta.get("usage")
+    api_usages = meta.get("api_usages")
+    api_list = list(api_usages) if isinstance(api_usages, list) else []
     status = str(meta.get("status", "done"))
     hint = meta.get("hint")
     tool_turns = int(meta.get("tool_turns", len(tool_events)))
@@ -538,6 +546,7 @@ def finish_stream_turn(
         base.Completion(
             text="".join(pieces),
             usage=usage,
+            api_usages=api_list,
             tool_events=tool_events,
             status=status,
             hint=hint,

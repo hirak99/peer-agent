@@ -228,13 +228,6 @@ class AnthropicBackend(base.Backend):
             total_input_tokens=total_input_tokens,
         )
 
-    @staticmethod
-    def _accumulate_usage(
-        total: log_events.TokenUsage | None, latest: log_events.TokenUsage | None
-    ) -> log_events.TokenUsage | None:
-        """Merges per-turn usage: last prompt size, summed generation/cost."""
-        return tool_loop.accumulate_usage(total, latest)
-
     def _should_cache(self) -> bool:
         """Delegates to the shared recency gate (one decision per request)."""
         gate = self._cache_gate
@@ -349,7 +342,7 @@ class AnthropicBackend(base.Backend):
         messages: list[dict[str, Any]],
         text_prefix: str,
         tool_events: list[base.ToolEvent],
-        usage: log_events.TokenUsage | None,
+        api_usages: list[log_events.TokenUsage],
         tool_turns: int,
         cap: int,
     ) -> base.Completion:
@@ -377,7 +370,9 @@ class AnthropicBackend(base.Backend):
             ),
         )
         if response.usage is not None:
-            usage = self._accumulate_usage(usage, self._to_token_usage(response.usage))
+            latest = self._to_token_usage(response.usage)
+            api_usages.append(latest)
+            usage = latest
         summary = "".join(
             block.text for block in response.content if block.type == "text"
         )
@@ -391,6 +386,7 @@ class AnthropicBackend(base.Backend):
         return base.Completion(
             text=text,
             usage=usage,
+            api_usages=list(api_usages),
             tool_events=tool_events,
             status="continuation_required",
             hint=hint,
@@ -412,6 +408,7 @@ class AnthropicBackend(base.Backend):
         tool_events: list[base.ToolEvent] = []
         seen: list[tuple[str, bool]] = []
         usage: log_events.TokenUsage | None = None
+        api_usages: list[log_events.TokenUsage] = []
         tool_turns = 0
         text_prefix = ""
         reasoning_parts: list[str] = []
@@ -420,7 +417,7 @@ class AnthropicBackend(base.Backend):
         while True:
             if cap is not None and tool_turns >= cap:
                 completion = self._yield_completion(
-                    messages, text_prefix, tool_events, usage, tool_turns, cap
+                    messages, text_prefix, tool_events, api_usages, tool_turns, cap
                 )
                 completion.compaction = recovered
                 if reasoning_parts or completion.reasoning:
@@ -446,9 +443,9 @@ class AnthropicBackend(base.Backend):
                 recovered = record
                 continue
             if response.usage is not None:
-                usage = self._accumulate_usage(
-                    usage, self._to_token_usage(response.usage)
-                )
+                latest = self._to_token_usage(response.usage)
+                api_usages.append(latest)
+                usage = latest
             turn_reasoning = self._extract_reasoning(response.content)
             if turn_reasoning:
                 reasoning_parts.append(turn_reasoning)
@@ -462,6 +459,7 @@ class AnthropicBackend(base.Backend):
                 return base.Completion(
                     text=full,
                     usage=usage,
+                    api_usages=list(api_usages),
                     tool_events=tool_events,
                     status="done",
                     hint=None,
@@ -507,16 +505,18 @@ class AnthropicBackend(base.Backend):
         cap = host_max_tool_turns
         seen: list[tuple[str, bool]] = []
         usage: log_events.TokenUsage | None = None
+        api_usages: list[log_events.TokenUsage] = []
         tool_turns = 0
         recovered: base.CompactionRecord | None = None
         yielded_any = False
         while True:
             if cap is not None and tool_turns >= cap:
                 completion = self._yield_completion(
-                    messages, "", tool_events, usage, tool_turns, cap
+                    messages, "", tool_events, api_usages, tool_turns, cap
                 )
                 if meta is not None:
                     meta["usage"] = completion.usage
+                    meta["api_usages"] = list(completion.api_usages)
                     meta["status"] = completion.status
                     meta["hint"] = completion.hint
                     meta["tool_turns"] = completion.tool_turns
@@ -552,7 +552,9 @@ class AnthropicBackend(base.Backend):
                 final = stream.get_final_message()
             final_usage = getattr(final, "usage", None)
             if final_usage is not None:
-                usage = self._accumulate_usage(usage, self._to_token_usage(final_usage))
+                latest = self._to_token_usage(final_usage)
+                api_usages.append(latest)
+                usage = latest
             calls = [block for block in final.content if block.type == "tool_use"]
             if not calls:
                 text = "".join(
@@ -561,6 +563,7 @@ class AnthropicBackend(base.Backend):
                 messages.append({"role": "assistant", "content": text})
                 if meta is not None:
                     meta["usage"] = usage
+                    meta["api_usages"] = list(api_usages)
                     meta["status"] = "done"
                     meta["hint"] = None
                     meta["tool_turns"] = tool_turns

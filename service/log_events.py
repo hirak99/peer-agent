@@ -49,7 +49,9 @@ class ResponseEvent(BaseEvent):
     type: Literal["response"] = "response"
     # Final reply text.
     text: str
-    # Token counts, or None when the backend reports none.
+    # Token counts for the LAST provider call in the turn (the live
+    # prompt size; the window/compaction-relevant number). Billed totals
+    # are the sum over this turn's api_call events, not this field.
     usage: TokenUsage | None
     # Model id that produced the reply (per turn, for mid-thread switches).
     model: str
@@ -61,6 +63,17 @@ class ResponseEvent(BaseEvent):
     tool_turns: int = 0
     # Accumulated model thinking text (logs only; None when absent).
     reasoning: str | None = None
+
+
+class ApiCallEvent(BaseEvent):
+    """One provider API call inside a turn (one tool-loop step)."""
+
+    # Discriminator for the LogEvent union.
+    type: Literal["api_call"] = "api_call"
+    # 1-based index of this call within the turn's tool loop.
+    api_turn: int
+    # Provider-reported counts for this call only (never summed).
+    usage: TokenUsage | None
 
 
 class ToolCallEvent(BaseEvent):
@@ -125,6 +138,7 @@ class SystemPromptEvent(BaseEvent):
 LogEvent = Annotated[
     PromptEvent
     | ResponseEvent
+    | ApiCallEvent
     | ToolCallEvent
     | ToolResultEvent
     | SystemPromptEvent

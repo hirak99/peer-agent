@@ -48,6 +48,7 @@ class StubBackend(base.Backend):
         completion = self.complete(messages, context, host_max_tool_turns, on_tool_event)
         if meta is not None:
             meta["usage"] = completion.usage
+            meta["api_usages"] = list(completion.api_usages)
             meta["status"] = completion.status
             meta["hint"] = completion.hint
             meta["tool_turns"] = completion.tool_turns

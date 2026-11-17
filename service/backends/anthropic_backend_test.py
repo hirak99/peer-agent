@@ -344,3 +344,66 @@ def test_to_token_usage_without_cache_parts() -> None:
     usage = types.SimpleNamespace(input_tokens=487, output_tokens=47)
     mapped = anthropic_backend.AnthropicBackend._to_token_usage(usage)
     assert mapped.total_input_tokens == 487
+
+
+def test_complete_records_per_call_usage() -> None:
+    """Each tool-loop call keeps its own counts; usage is the last call."""
+    backend = _wired_backend()
+
+    def _text_block(text: str) -> Any:
+        return types.SimpleNamespace(
+            type="text",
+            text=text,
+            model_dump=lambda text=text: {"type": "text", "text": text},
+        )
+
+    first = types.SimpleNamespace(
+        content=[
+            _text_block("working"),
+            types.SimpleNamespace(
+                type="tool_use",
+                id="t1",
+                name="t",
+                input={},
+                model_dump=lambda: {"type": "tool_use", "id": "t1", "name": "t", "input": {}},
+            ),
+        ],
+        usage=types.SimpleNamespace(
+            input_tokens=2,
+            output_tokens=10,
+            cache_read_input_tokens=250000,
+            cache_creation_input_tokens=3000,
+        ),
+        stop_reason="tool_use",
+    )
+    final = types.SimpleNamespace(
+        content=[_text_block("done")],
+        usage=types.SimpleNamespace(
+            input_tokens=3,
+            output_tokens=5,
+            cache_read_input_tokens=253000,
+            cache_creation_input_tokens=100,
+        ),
+        stop_reason="end_turn",
+    )
+    calls = iter([first, final])
+
+    def _create(**kwargs: Any) -> Any:
+        return next(calls)
+
+    backend._client = cast(
+        Any, types.SimpleNamespace(messages=types.SimpleNamespace(create=_create))
+    )
+    completion = backend.complete(
+        [{"role": "user", "content": "hi"}], base.ToolContext(workdir=None), None
+    )
+    assert completion.tool_turns == 1
+    assert len(completion.api_usages) == 2
+    # Per-call counts are preserved, not summed.
+    assert completion.api_usages[0].cached_prompt_tokens == 250000
+    assert completion.api_usages[0].cache_creation_input_tokens == 3000
+    assert completion.api_usages[1].cached_prompt_tokens == 253000
+    # Usage is the last call's prompt size, the compaction-relevant number.
+    assert completion.usage is not None
+    assert completion.usage.total_input_tokens == 3 + 253000 + 100
+    assert completion.usage.completion_tokens == 5
